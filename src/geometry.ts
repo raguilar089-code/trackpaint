@@ -230,3 +230,58 @@ export function simplify(coords: LngLat[], tolerance: number): LngLat[] {
   }
   return coords.filter((_, i) => keep[i]);
 }
+
+/**
+ * Round off sharp corners (e.g. street intersections when following roads):
+ * resample every `step` metres, then average each point with its neighbours
+ * within `radius` metres. Ends of an open line stay where they are.
+ */
+export function roundCorners(samples: Sample[], closed: boolean, radius: number, step = 2): Sample[] {
+  if (samples.length < 3 || radius <= 0) return samples;
+  const proj = new LocalProjection(samples[0].coord);
+  const xy = samples.map((s) => proj.toXY(s.coord));
+  // Resample at a fixed spacing, keeping the segment tag of each piece.
+  const pts: [number, number][] = [xy[0]];
+  const segs: number[] = [samples[0].seg];
+  let carry = 0;
+  for (let i = 1; i < xy.length; i++) {
+    const [ax, ay] = xy[i - 1];
+    const [bx, by] = xy[i];
+    const len = Math.hypot(bx - ax, by - ay);
+    let d = step - carry;
+    while (d <= len) {
+      const t = d / len;
+      pts.push([ax + (bx - ax) * t, ay + (by - ay) * t]);
+      segs.push(samples[i].seg);
+      d += step;
+    }
+    carry = len - (d - step);
+  }
+  const last = xy[xy.length - 1];
+  pts.push(last);
+  segs.push(samples[samples.length - 1].seg);
+
+  const n = pts.length;
+  const k = Math.max(1, Math.round(radius / step));
+  const loop = closed && n > 2 * k + 2;
+  const m = loop ? n - 1 : n; // a closed line repeats its first point at the end
+  const out: Sample[] = [];
+  for (let i = 0; i < m; i++) {
+    if (!loop && (i === 0 || i === n - 1)) {
+      out.push({ coord: proj.toLngLat(pts[i]), seg: segs[i] });
+      continue;
+    }
+    // Shrink the window near the ends of an open line so they stay put.
+    const w = loop ? k : Math.min(k, i, n - 1 - i);
+    let sx = 0;
+    let sy = 0;
+    for (let j = -w; j <= w; j++) {
+      const idx = loop ? (((i + j) % m) + m) % m : i + j;
+      sx += pts[idx][0];
+      sy += pts[idx][1];
+    }
+    out.push({ coord: proj.toLngLat([sx / (2 * w + 1), sy / (2 * w + 1)]), seg: segs[i] });
+  }
+  if (loop) out.push({ coord: out[0].coord, seg: segs[n - 1] });
+  return out;
+}

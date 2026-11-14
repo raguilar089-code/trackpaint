@@ -1,6 +1,23 @@
 import type { TrackAnalysis } from './analysis';
 import type { LngLat } from './geometry';
-import { KERB_COLORS, type TrackElement, blockRing, offsetLine, sliceLine } from './elements';
+import {
+  KERB_COLORS,
+  OVERTAKE_COLOR,
+  SECTOR_COLORS,
+  SPEEDTRAP_COLOR,
+  STRAIGHT_MODE_COLOR,
+  type TrackElement,
+  CRANE_COLOR,
+  MARSHAL_COLOR,
+  blockRing,
+  crossLine,
+  marshalNumbers,
+  postBlock,
+  offsetLine,
+  sectorBounds,
+  sectorLines,
+  sliceLine,
+} from './elements';
 
 export type PosterTheme = 'oscuro' | 'claro';
 
@@ -195,6 +212,13 @@ function elementPoints(e: TrackElement): LngLat[] {
     case 'pits':
     case 'grandstand':
       return blockRing(e);
+    case 'sector':
+    case 'speedtrap':
+    case 'overtake':
+    case 'straightmode':
+    case 'marshal':
+    case 'crane':
+      return [];
     default:
       return e.coords;
   }
@@ -260,11 +284,28 @@ function drawTrack(
     }
   }
 
+  // Straight Mode zones: a green glow under the track.
+  const zones = info.elements
+    .filter((e) => e.type === 'straightmode')
+    .sort((x, y) => (x as { from: number }).from - (y as { from: number }).from);
+  for (const z of zones) {
+    if (z.type !== 'straightmode') continue;
+    ctx.strokeStyle = STRAIGHT_MODE_COLOR;
+    ctx.globalAlpha = 0.55;
+    ctx.lineWidth = 70;
+    trace(L(sliceLine(info.centre, z.from, z.to, a.closed, 4)));
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  const bounds = sectorBounds(info.elements);
+  const sectors = bounds.length === 2 ? sectorLines(info.centre, bounds) : [];
+
   ctx.save();
   ctx.shadowColor = t.shadow;
   ctx.shadowBlur = 40;
   ctx.shadowOffsetY = 12;
-  ctx.strokeStyle = t.trackEdge;
+  ctx.strokeStyle = sectors.length ? t.track : t.trackEdge;
   ctx.lineWidth = 44;
   path();
   ctx.stroke();
@@ -273,6 +314,16 @@ function drawTrack(
   ctx.lineWidth = 28;
   path();
   ctx.stroke();
+  // Track coloured by sector, like a timing screen.
+  sectors.forEach((line, i) => {
+    if (line.length < 2) return;
+    ctx.strokeStyle = SECTOR_COLORS[i];
+    ctx.lineWidth = 20;
+    ctx.lineCap = 'butt';
+    trace(L(line));
+    ctx.stroke();
+    ctx.lineCap = 'round';
+  });
 
   // Kerbs: red/white (or blue, yellow) dashes just outside the track edge.
   const edgeOffset = (22 + 4) / scale; // metres that land just outside the drawn track
@@ -411,6 +462,104 @@ function drawTrack(
   }
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
+
+  // Marshal posts (numbered orange dots) and recovery cranes (yellow squares).
+  const postNo = marshalNumbers(info.elements);
+  const postGap = (22 + 26) / scale; // metres, so posts sit clear of the drawn track
+  for (const e of info.elements) {
+    if (e.type !== 'marshal' && e.type !== 'crane') continue;
+    const b = postBlock(e, info.centre, a.closed, 0);
+    if (!b) continue;
+    const seg = sliceLine(info.centre, e.at - 1, e.at + 1, a.closed, 1);
+    if (seg.length < 2) continue;
+    const pos = offsetLine(seg, postGap + (e.type === 'crane' ? 26 / scale : 0), e.side)[1];
+    const [x, y] = P(a.projection.toXY(pos));
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = t.bg;
+    if (e.type === 'marshal') {
+      ctx.fillStyle = MARSHAL_COLOR;
+      ctx.beginPath();
+      ctx.arc(x, y, 15, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `800 15px ${FONT}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(postNo.get(e.id) ?? ''), x, y + 1);
+    } else {
+      ctx.fillStyle = CRANE_COLOR;
+      roundRect(ctx, x - 12, y - 12, 24, 24, 4);
+      ctx.fill();
+      ctx.stroke();
+    }
+  }
+  ctx.textAlign = 'left';
+
+  // Sector boundaries, speed trap and Overtake Mode detection: bars across the track.
+  const markerLen = 62 / scale; // metres either side of the centre line
+  const tag = (text: string, color: string, x: number, y: number) => {
+    ctx.font = `800 24px ${FONT}`;
+    const w = ctx.measureText(text).width + 20;
+    ctx.fillStyle = color;
+    roundRect(ctx, x, y - 18, w, 36, 8);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, x + 10, y + 1);
+  };
+  const bar = (at: number, color: string, text: string) => {
+    const l = crossLine(info.centre, at, a.closed, 0, markerLen);
+    if (l.length < 2) return;
+    const [p1, p2] = L(l);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 8;
+    ctx.lineCap = 'round';
+    trace([p1, p2]);
+    ctx.stroke();
+    // Label beyond the end of the bar that is further from the circuit's middle.
+    const mid = [area.x + area.w / 2, area.y + area.h / 2];
+    const far = Math.hypot(p1[0] - mid[0], p1[1] - mid[1]) > Math.hypot(p2[0] - mid[0], p2[1] - mid[1]) ? p1 : p2;
+    const right = far[0] >= mid[0];
+    ctx.font = `800 24px ${FONT}`;
+    const w = ctx.measureText(text).width + 20;
+    tag(text, color, right ? far[0] + 10 : far[0] - 10 - w, far[1]);
+  };
+  bounds.forEach((at, i) => bar(at, SECTOR_COLORS[i + 1], `S${i + 2}`));
+  for (const e of info.elements) {
+    if (e.type === 'speedtrap') bar(e.at, SPEEDTRAP_COLOR, 'SPEED TRAP');
+    if (e.type === 'overtake') bar(e.at, OVERTAKE_COLOR, 'DETECCIÓN');
+  }
+  zones.forEach((z, i) => {
+    if (z.type !== 'straightmode') return;
+    const l = crossLine(info.centre, z.from, a.closed, 0, markerLen);
+    if (l.length < 2) return;
+    const [p1, p2] = L(l);
+    const mid = [area.x + area.w / 2, area.y + area.h / 2];
+    const far = Math.hypot(p1[0] - mid[0], p1[1] - mid[1]) > Math.hypot(p2[0] - mid[0], p2[1] - mid[1]) ? p1 : p2;
+    tag(`SM${i + 1}`, '#15803d', far[0] + (far[0] >= mid[0] ? 6 : -70), far[1]);
+  });
+
+  // Legend for whatever race markings are present.
+  const legend: [string, string][] = [];
+  if (sectors.length) SECTOR_COLORS.forEach((c, i) => legend.push([c, `Sector ${i + 1}`]));
+  if (zones.length) legend.push([STRAIGHT_MODE_COLOR, 'Zona Straight Mode']);
+  if (info.elements.some((e) => e.type === 'speedtrap')) legend.push([SPEEDTRAP_COLOR, 'Speed trap']);
+  if (info.elements.some((e) => e.type === 'overtake')) legend.push([OVERTAKE_COLOR, 'Detección Overtake Mode']);
+  if (info.elements.some((e) => e.type === 'marshal')) legend.push([MARSHAL_COLOR, 'Puesto de comisarios']);
+  if (info.elements.some((e) => e.type === 'crane')) legend.push([CRANE_COLOR, 'Grúa']);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  legend.forEach(([color, text], i) => {
+    const ly = area.y + area.h - 40 - (legend.length - 1 - i) * 44;
+    ctx.fillStyle = color;
+    roundRect(ctx, area.x + 10, ly - 7, 46, 14, 7);
+    ctx.fill();
+    ctx.fillStyle = t.muted;
+    ctx.font = `600 28px ${FONT}`;
+    ctx.fillText(text, area.x + 72, ly + 1);
+  });
 
   // North arrow and scale bar, bottom-right of the area.
   const bx = area.x + area.w - 40;

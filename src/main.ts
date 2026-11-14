@@ -13,7 +13,7 @@ import {
   segmentKey,
   segments,
 } from './circuit';
-import { type LngLat, type Sample, simplify } from './geometry';
+import { type LngLat, type Sample, bearing, simplify } from './geometry';
 import { STYLES, addTrackLayers, renderElements, renderStroke, renderTrack, usePattern } from './render';
 import {
   ELEMENT_LABELS,
@@ -22,6 +22,8 @@ import {
   type KerbColor,
   type TrackElement,
   autoKerbs,
+  autoRaceLayout,
+  autoMarshals,
   autoWalls,
   cumulative,
   locateOnTrack,
@@ -30,6 +32,7 @@ import {
 } from './elements';
 import { type Locality, flagUrl, reverseGeocode, routeSegment, searchPlaces } from './services';
 import { analyzeTrack } from './analysis';
+import { type LapProfile, carAt, formatLapTime, lapProfile } from './lap';
 import { type PosterTheme, drawPoster } from './poster';
 import * as storage from './storage';
 
@@ -148,6 +151,8 @@ const ELEMENT_LAYERS = [
   'tp-gravel',
   'tp-runoff',
   'tp-grass',
+  'tp-markers',
+  'tp-zones',
 ];
 function elementAt(e: MapMouseEvent | MapTouchEvent): string | null {
   const layers = ELEMENT_LAYERS.filter((l) => map.getLayer(l));
@@ -168,6 +173,20 @@ function select(id: string | null) {
 map.on('click', (e) => {
   if (tool === 'pan' || tool === 'paint') return;
   if (tool === 'element') {
+    if (elementType === 'sector' || elementType === 'speedtrap' || elementType === 'overtake') {
+      placeMarker(elementType, [e.lngLat.lng, e.lngLat.lat]);
+      return;
+    }
+    if (elementType === 'marshal' || elementType === 'crane') {
+      const line = centre();
+      if (line.length < 2) return setStatus('Dibuja primero la pista.');
+      const loc = locateOnTrack(line, [e.lngLat.lng, e.lngLat.lat]);
+      const post = { id: newId(), type: elementType, at: loc.dist, side: loc.side };
+      commit((c) => c.elements.push(post));
+      select(post.id);
+      setStatus(`${ELEMENT_LABELS[post.type]} colocado.`);
+      return;
+    }
     if (elementType === 'pits' || elementType === 'grandstand') {
       const type = elementType;
       const block = placeBlock(type, centre(), circuit.width, [e.lngLat.lng, e.lngLat.lat]);
@@ -206,6 +225,36 @@ map.on('click', (e) => {
     commit((c) => c.points.splice(seg + 1, 0, p));
   }
 });
+
+/** Put a sector boundary, the speed trap or the Overtake Mode detection point on the track. */
+function placeMarker(type: 'sector' | 'speedtrap' | 'overtake', p: LngLat) {
+  const line = centre();
+  if (line.length < 2) return setStatus('Dibuja primero la pista.');
+  const at = locateOnTrack(line, p).dist;
+  const id = newId();
+  commit((c) => {
+    if (type === 'sector') {
+      const sectors = c.elements.filter((e) => e.type === 'sector') as { id: string; at: number }[];
+      if (sectors.length >= 2) {
+        // Move the nearer of the two existing boundaries.
+        const nearer = sectors.reduce((a, b) => (Math.abs(b.at - at) < Math.abs(a.at - at) ? b : a));
+        c.elements = c.elements.filter((e) => e.id !== nearer.id);
+      }
+    } else {
+      c.elements = c.elements.filter((e) => e.type !== type); // only one of each
+    }
+    c.elements.push({ id, type, at });
+  });
+  select(id);
+  const n = circuit.elements.filter((e) => e.type === 'sector').length;
+  setStatus(
+    type === 'sector'
+      ? n < 2
+        ? 'Límite de sector puesto. Pon otro para tener los 3 sectores.'
+        : 'Sectores listos.'
+      : `${ELEMENT_LABELS[type]} colocado.`,
+  );
+}
 
 // Drag pits and grandstands in Edit mode.
 function startBlockDrag(e: MapMouseEvent | MapTouchEvent) {
@@ -325,7 +374,9 @@ function eventXY(e: MapMouseEvent | MapTouchEvent) {
 }
 
 function startPaint(e: MapMouseEvent | MapTouchEvent) {
-  const strokeElement = tool === 'element' && elementType !== 'pits' && elementType !== 'grandstand';
+  const strokeElement =
+    tool === 'element' &&
+    !['pits', 'grandstand', 'sector', 'speedtrap', 'overtake', 'marshal', 'crane'].includes(elementType);
   if ((tool !== 'paint' && !strokeElement) || dragIndex !== null) return;
   if ('points' in e && e.points.length > 1) return; // let two-finger gestures zoom/rotate
   if ('originalEvent' in e && e.originalEvent instanceof MouseEvent && e.originalEvent.button !== 0) return;
@@ -357,7 +408,7 @@ function applyElementStroke(pts: { x: number; y: number }[]) {
   const coords = simplify(pts.map(toLngLat), Math.max(0.3, a.distanceTo(b)));
   const type = elementType;
   let el: TrackElement | null = null;
-  if (type === 'kerb') {
+  if (type === 'kerb' || type === 'straightmode') {
     const line = centre();
     if (line.length < 2) {
       setStatus('Dibuja primero la pista.');
@@ -372,7 +423,10 @@ function applyElementStroke(pts: { x: number; y: number }[]) {
       // Take the shorter way round between the two ends of the stroke.
       if ((((to - from) % total) + total) % total > total / 2) [from, to] = [to, from];
     } else if (from > to) [from, to] = [to, from];
-    el = { id: newId(), type: 'kerb', from, to, side: start.side, color: kerbColor };
+    el =
+      type === 'kerb'
+        ? { id: newId(), type: 'kerb', from, to, side: start.side, color: kerbColor }
+        : { id: newId(), type: 'straightmode', from, to };
   } else if (type === 'gravel' || type === 'runoff' || type === 'grass') {
     if (coords.length < 3) return;
     el = { id: newId(), type, ring: coords };
@@ -441,7 +495,7 @@ const HINTS: Record<Tool, string> = {
     'Mantén pulsado y arrastra para pintar la pista. Termina en el inicio para cerrarla, o empieza en el final para continuarla. Usa dos dedos o la rueda para moverte.',
   draw: 'Haz clic en el mapa para añadir puntos. Clic en el punto verde para cerrar el circuito.',
   edit: 'Arrastra los puntos para moverlos. Clic sobre la pista para añadir uno. Doble clic o clic derecho en un punto para borrarlo.',
-  pan: 'Mueve, gira e inclina el mapa sin tocar el trazado.',
+  pan: 'Mueve, gira e inclina el mapa sin tocar el trazado. También puedes moverte con W A S D (Mayús para ir más rápido).',
   element: '',
 };
 
@@ -456,6 +510,12 @@ const ELEMENT_HINTS: Record<ElementType, string> = {
   grass: 'Rodea la zona de césped; se cierra sola al soltar.',
   pits: 'Haz clic junto a la pista: los boxes se colocan en paralelo, en ese lado.',
   grandstand: 'Haz clic junto a la pista: la grada se coloca en paralelo, mirando a la pista.',
+  sector: 'Haz clic en la pista donde termina un sector. Con dos límites tienes los 3 sectores.',
+  speedtrap: 'Haz clic en la pista donde quieres medir la velocidad punta.',
+  overtake: 'Haz clic en la pista en el punto de detección del Overtake Mode (a menos de 1 s del rival se activa la energía extra).',
+  marshal: 'Haz clic junto a la pista, en el lado donde va el puesto de comisarios. Se numeran solos en el sentido de la carrera.',
+  crane: 'Haz clic junto a la pista, en el lado donde va la grúa de recuperación.',
+  straightmode: 'Arrastra a lo largo de la recta donde los coches pueden abrir los alerones (Straight Mode).',
 };
 
 function setTool(t: Tool) {
@@ -513,7 +573,7 @@ function updateSelectionUi() {
   $('sel-rotate-left').hidden = $('sel-rotate-right').hidden = !isBlock;
   $('sel-length-wrap').hidden = !isBlock;
   if (isBlock) $<HTMLInputElement>('sel-length').value = String(Math.round(el.length));
-  $('sel-flip').hidden = el.type !== 'kerb';
+  $('sel-flip').hidden = !['kerb', 'marshal', 'crane'].includes(el.type);
 }
 
 function updateSelected(change: (e: TrackElement) => void) {
@@ -625,6 +685,27 @@ $('auto-kerbs').onclick = () => {
   commit((c) => (c.elements = [...c.elements.filter((e) => e.type !== 'kerb'), ...kerbs]));
   setStatus(`${analysis.corners.length} curvas con pianos. Puedes borrar o añadir los que quieras.`);
 };
+$('auto-race').onclick = () => {
+  const line = centre();
+  if (line.length < 2) return setStatus('Dibuja primero la pista.');
+  const analysis = analyzeTrack(line, circuit.closed);
+  const lap = cumulative(line).at(-1)!;
+  const race = autoRaceLayout(analysis.corners, lap, circuit.closed);
+  const RACE = ['sector', 'speedtrap', 'overtake', 'straightmode'];
+  commit((c) => (c.elements = [...c.elements.filter((e) => !RACE.includes(e.type)), ...race]));
+  const zones = race.filter((e) => e.type === 'straightmode').length;
+  setStatus(`3 sectores, speed trap y ${zones} ${zones === 1 ? 'zona' : 'zonas'} de Straight Mode.`);
+};
+$('auto-marshals').onclick = () => {
+  const line = centre();
+  if (line.length < 2) return setStatus('Dibuja primero la pista.');
+  const analysis = analyzeTrack(line, circuit.closed);
+  const lap = cumulative(line).at(-1)!;
+  const posts = autoMarshals(analysis.corners, lap, circuit.closed);
+  commit((c) => (c.elements = [...c.elements.filter((e) => e.type !== 'marshal' && e.type !== 'crane'), ...posts]));
+  const m = posts.filter((p) => p.type === 'marshal').length;
+  setStatus(`${m} puestos de comisarios y ${posts.length - m} grúas.`);
+};
 $('auto-walls').onclick = () => {
   const walls = autoWalls(centre(), circuit.width, circuit.closed);
   if (!walls.length) return setStatus('Dibuja primero la pista.');
@@ -633,7 +714,11 @@ $('auto-walls').onclick = () => {
 };
 $('sel-delete').onclick = deleteSelected;
 $('sel-flip').onclick = () =>
-  updateSelected((e) => e.type === 'kerb' && (e.side = e.side === 'left' ? 'right' : 'left'));
+  updateSelected(
+    (e) =>
+      (e.type === 'kerb' || e.type === 'marshal' || e.type === 'crane') &&
+      (e.side = e.side === 'left' ? 'right' : 'left'),
+  );
 $('sel-rotate-left').onclick = () =>
   updateSelected((e) => (e.type === 'pits' || e.type === 'grandstand') && (e.bearing = (e.bearing + 345) % 360));
 $('sel-rotate-right').onclick = () =>
@@ -728,6 +813,8 @@ window.addEventListener('keydown', (e) => {
   } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
     e.preventDefault();
     deleteSelected();
+  } else if (e.key === 'Escape' && lap) {
+    stopLap();
   } else if (e.key === 'Escape' && selectedId) {
     select(null);
   } else if (e.key === 'Escape') {
@@ -903,6 +990,96 @@ map.on('pitchend', () => {
   });
 });
 
+// ---------- Lap flyover ----------
+
+interface LapRun {
+  profile: LapProfile;
+  start: number;
+  frame: number;
+  bearing: number;
+  marker: maplibregl.Marker;
+  restore: { center: maplibregl.LngLat; zoom: number; pitch: number; bearing: number };
+  panelWasCollapsed: boolean;
+}
+let lap: LapRun | null = null;
+/** Playback speed: the lap runs this many times faster than real time. */
+const LAP_RATE = 2;
+
+function angleLerp(from: number, to: number, f: number): number {
+  const diff = ((to - from + 540) % 360) - 180;
+  return (from + diff * f + 360) % 360;
+}
+
+function startLap() {
+  const profile = lapProfile(centre(), circuit.closed && circuit.points.length > 2);
+  if (!profile || profile.length < 50) {
+    setStatus('Dibuja un trazado más largo para dar una vuelta.');
+    return;
+  }
+  select(null);
+  setTool('pan');
+  const el = document.createElement('div');
+  el.className = 'car-marker';
+  const marker = new maplibregl.Marker({ element: el }).setLngLat(profile.coords[0]).addTo(map);
+  lap = {
+    profile,
+    start: performance.now(),
+    frame: 0,
+    bearing: bearing(profile.coords[0], profile.coords[Math.min(8, profile.coords.length - 1)]),
+    marker,
+    restore: { center: map.getCenter(), zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() },
+    panelWasCollapsed: $('panel').classList.contains('collapsed'),
+  };
+  // Hide the panel for a clear view of the lap.
+  $('panel').classList.add('collapsed');
+  $('play').setAttribute('aria-pressed', 'true');
+  $('play').textContent = '■ Parar';
+  $('hud-est').textContent = `/ ${formatLapTime(profile.lapTime)}`;
+  $('lap-hud').hidden = false;
+  lap.frame = requestAnimationFrame(lapFrame);
+}
+
+function lapFrame(now: number) {
+  if (!lap) return;
+  const { profile } = lap;
+  const t = ((now - lap.start) / 1000) * LAP_RATE;
+  const car = carAt(profile, t);
+  // Look 40 m ahead (wrapping on a loop) so the camera turns into corners smoothly.
+  const n = profile.coords.length;
+  const ahead = profile.coords[circuit.closed ? (car.index + 8) % n : Math.min(n - 1, car.index + 8)];
+  const target = bearing(car.coord, ahead);
+  lap.bearing = angleLerp(lap.bearing, target, 0.08);
+  lap.marker.setLngLat(car.coord);
+  // Top padding puts the car in the lower part of the screen, like a chase camera.
+  map.jumpTo({ center: car.coord, bearing: lap.bearing, pitch: 68, zoom: 17.3, padding: { top: map.getContainer().clientHeight * 0.35, bottom: 0, left: 0, right: 0 } });
+  $('hud-speed').textContent = String(Math.round(car.speed * 3.6));
+  $('hud-time').textContent = formatLapTime(Math.min(t, profile.lapTime));
+  $<HTMLElement>('hud-bar').style.width = `${(100 * car.dist) / profile.length}%`;
+  if (t >= profile.lapTime) {
+    stopLap(`Vuelta completada: ${formatLapTime(profile.lapTime)} estimado (coche de carreras, ${(profile.length / 1000).toFixed(2)} km).`);
+    return;
+  }
+  lap.frame = requestAnimationFrame(lapFrame);
+}
+
+function stopLap(message?: string) {
+  if (!lap) return;
+  cancelAnimationFrame(lap.frame);
+  lap.marker.remove();
+  const { restore, panelWasCollapsed } = lap;
+  lap = null;
+  if (!panelWasCollapsed) $('panel').classList.remove('collapsed');
+  $('play').setAttribute('aria-pressed', 'false');
+  $('play').textContent = '▶ Vuelta';
+  $('lap-hud').hidden = true;
+  map.easeTo({ ...restore, padding: { top: 0, bottom: 0, left: 0, right: 0 }, duration: 1200 });
+  if (message) setStatus(message);
+}
+
+$('play').onclick = () => (lap ? stopLap() : startLap());
+// Grabbing the map takes the camera back.
+map.on('dragstart', () => stopLap());
+
 // ---------- Start ----------
 
 document.querySelector('[data-style="mapa"]')?.setAttribute('aria-pressed', 'true');
@@ -912,4 +1089,40 @@ updateUi();
 if (circuit.snapToRoads) void fetchMissingRoutes();
 
 // Exposed for automated checks and debugging in the browser console.
-Object.assign(window, { trackpaint: { map, get circuit() { return circuit; }, loadCircuit } });
+Object.assign(window, { trackpaint: { map, get circuit() { return circuit; }, loadCircuit, get lap() { return lap; } } });
+
+// ---------- Keyboard panning (WASD, Shift to go faster) ----------
+
+const PAN_KEYS: Record<string, [number, number]> = { w: [0, -1], a: [-1, 0], s: [0, 1], d: [1, 0] };
+const heldKeys = new Set<string>();
+let panFrame = 0;
+let panFast = false;
+function panLoop() {
+  let dx = 0;
+  let dy = 0;
+  for (const k of heldKeys) {
+    dx += PAN_KEYS[k][0];
+    dy += PAN_KEYS[k][1];
+  }
+  if (!dx && !dy) {
+    panFrame = 0;
+    return;
+  }
+  const speed = panFast ? 24 : 10; // pixels per frame
+  map.panBy([dx * speed, dy * speed], { duration: 0 });
+  panFrame = requestAnimationFrame(panLoop);
+}
+const isTyping = (t: EventTarget | null) => !!(t as HTMLElement | null)?.closest?.('input, textarea, select, dialog[open]');
+window.addEventListener('keydown', (e) => {
+  const k = e.key.toLowerCase();
+  if (!(k in PAN_KEYS) || e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target)) return;
+  e.preventDefault();
+  panFast = e.shiftKey;
+  heldKeys.add(k);
+  if (!panFrame) panFrame = requestAnimationFrame(panLoop);
+});
+window.addEventListener('keyup', (e) => {
+  heldKeys.delete(e.key.toLowerCase());
+  panFast = e.shiftKey;
+});
+window.addEventListener('blur', () => heldKeys.clear());

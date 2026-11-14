@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { type LngLat, LocalProjection, distance, lineLength } from '../src/geometry';
-import { autoKerbs, blockRing, kerbStripes, locateOnTrack, parseElements, placeBlock, sliceLine } from '../src/elements';
+import { autoKerbs, autoRaceLayout, blockRing, kerbStripes, locateOnTrack, parseElements, placeBlock, sectorLines, sliceLine } from '../src/elements';
 import { analyzeTrack } from '../src/analysis';
 import { parseCircuit } from '../src/circuit';
 
@@ -87,5 +87,34 @@ describe('parseElements', () => {
   });
   it('loads old circuits without elements', () => {
     expect(parseCircuit({ points: [] }).elements).toEqual([]);
+  });
+});
+
+describe('autoRaceLayout', () => {
+  it('adds 3 sectors, Straight Mode on long straights, a speed trap and Overtake detection', () => {
+    // 600 x 200 m rectangle: two long straights (~600 m) and two short ones (~200 m).
+    const pts: LngLat[] = [];
+    const c: [number, number][] = [[0, 0], [600, 0], [600, 200], [0, 200]];
+    for (let k = 0; k < 4; k++) for (let t = 0; t < 1; t += 0.01) {
+      const [ax, ay] = c[k];
+      const [bx, by] = c[(k + 1) % 4];
+      pts.push(ll(ax + (bx - ax) * t, ay + (by - ay) * t));
+    }
+    pts.push(pts[0]);
+    const lap = lineLength(pts);
+    const a = analyzeTrack(pts, true);
+    const race = autoRaceLayout(a.corners, lap, true);
+    const sectors = race.filter((e) => e.type === 'sector');
+    expect(sectors).toHaveLength(2);
+    const zones = race.filter((e) => e.type === 'straightmode');
+    expect(zones).toHaveLength(2); // only the two 600 m straights
+    for (const z of zones) if (z.type === 'straightmode') expect(z.to - z.from).toBeGreaterThan(300);
+    expect(race.filter((e) => e.type === 'speedtrap')).toHaveLength(1);
+    expect(race.filter((e) => e.type === 'overtake')).toHaveLength(1);
+  });
+
+  it('splits the lap into three sector lines', () => {
+    const lines = sectorLines(straight, [100, 300]);
+    expect(lines.map((l) => Math.round(lineLength(l)))).toEqual([100, 200, 100]);
   });
 });

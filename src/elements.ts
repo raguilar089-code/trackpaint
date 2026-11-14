@@ -38,7 +38,37 @@ export interface BlockElement {
   length: number;
   depth: number;
 }
-export type TrackElement = KerbElement | LineElement | AreaElement | BlockElement;
+/**
+ * Point on the track at a distance along the centreline: a sector boundary,
+ * the speed trap, or the Overtake Mode detection point.
+ */
+export interface MarkerElement {
+  id: string;
+  type: 'sector' | 'speedtrap' | 'overtake';
+  at: number;
+}
+/** Straight Mode zone (F1 2026 active aero, replaced DRS zones). */
+export interface ZoneElement {
+  id: string;
+  type: 'straightmode';
+  from: number;
+  to: number;
+}
+/** Marshal post or recovery crane beside the track. */
+export interface PostElement {
+  id: string;
+  type: 'marshal' | 'crane';
+  at: number;
+  side: Side;
+}
+export type TrackElement =
+  | KerbElement
+  | LineElement
+  | AreaElement
+  | BlockElement
+  | MarkerElement
+  | ZoneElement
+  | PostElement;
 export type ElementType = TrackElement['type'];
 
 export const ELEMENT_LABELS: Record<ElementType, string> = {
@@ -52,7 +82,26 @@ export const ELEMENT_LABELS: Record<ElementType, string> = {
   grass: 'Césped',
   pits: 'Boxes',
   grandstand: 'Grada',
+  sector: 'Límite de sector',
+  speedtrap: 'Speed trap',
+  overtake: 'Detección Overtake Mode',
+  straightmode: 'Zona Straight Mode',
+  marshal: 'Puesto de comisarios',
+  crane: 'Grúa',
 };
+export const MARSHAL_COLOR = '#f97316';
+export const CRANE_COLOR = '#facc15';
+/** Footprint and distance from the track edge (metres). */
+export const POST_SIZES: Record<PostElement['type'], { length: number; depth: number; height: number; gap: number }> = {
+  marshal: { length: 4, depth: 3, height: 2.6, gap: 6 },
+  crane: { length: 7, depth: 3, height: 5, gap: 14 },
+};
+
+/** Classic timing-screen sector colours. */
+export const SECTOR_COLORS = ['#e11d2e', '#16a3e0', '#f2c200'];
+export const STRAIGHT_MODE_COLOR = '#22c55e';
+export const SPEEDTRAP_COLOR = '#a855f7';
+export const OVERTAKE_COLOR = '#f97316';
 
 export const KERB_WIDTH = 1.2;
 const KERB_STRIPE = 2;
@@ -108,6 +157,25 @@ export function parseElements(data: unknown): TrackElement[] {
           out.push({ id, type: e.type, ring: e.ring.map(toLngLat) });
         }
         break;
+      case 'sector':
+      case 'speedtrap':
+      case 'overtake': {
+        const at = Number(e.at);
+        if (Number.isFinite(at)) out.push({ id, type: e.type, at });
+        break;
+      }
+      case 'marshal':
+      case 'crane': {
+        const at = Number(e.at);
+        if (Number.isFinite(at)) out.push({ id, type: e.type, at, side: e.side === 'left' ? 'left' : 'right' });
+        break;
+      }
+      case 'straightmode': {
+        const from = Number(e.from);
+        const to = Number(e.to);
+        if (Number.isFinite(from) && Number.isFinite(to)) out.push({ id, type: 'straightmode', from, to });
+        break;
+      }
       case 'pits':
       case 'grandstand': {
         const length = Number(e.length);
@@ -137,7 +205,7 @@ export function cumulative(coords: LngLat[]): number[] {
   return out;
 }
 
-function pointAt(coords: LngLat[], cum: number[], d: number): LngLat {
+export function pointAt(coords: LngLat[], cum: number[], d: number): LngLat {
   if (d <= 0) return coords[0];
   const total = cum[cum.length - 1];
   if (d >= total) return coords[coords.length - 1];
@@ -311,4 +379,119 @@ export function autoWalls(centre: LngLat[], trackWidth: number, closed: boolean)
     if (closed) coords[coords.length - 1] = coords[0];
     return { id: newId(), type: 'wall' as const, coords };
   });
+}
+
+/** Distances along the lap where sectors 2 and 3 start (sector 1 starts at the line). */
+export function sectorBounds(elements: TrackElement[]): number[] {
+  return elements
+    .filter((e): e is MarkerElement => e.type === 'sector')
+    .map((e) => e.at)
+    .sort((a, b) => a - b)
+    .slice(0, 2);
+}
+
+/** Split the centreline into the three sector polylines. */
+export function sectorLines(centre: LngLat[], bounds: number[]): LngLat[][] {
+  if (bounds.length < 2 || centre.length < 2) return [];
+  const total = cumulative(centre).at(-1)!;
+  const cuts = [0, bounds[0], bounds[1], total];
+  const out: LngLat[][] = [];
+  for (let i = 0; i < 3; i++) out.push(sliceLine(centre, cuts[i], cuts[i + 1], false, 3));
+  return out;
+}
+
+/** Short line across the track at a distance, a bit wider than the track. */
+export function crossLine(centre: LngLat[], at: number, closed: boolean, trackWidth: number, extra = 3): LngLat[] {
+  const seg = sliceLine(centre, at - 1, at + 1, closed, 1);
+  if (seg.length < 2) return [];
+  const half = trackWidth / 2 + extra;
+  return [offsetLine(seg, half, 'left')[1], offsetLine(seg, half, 'right')[1]];
+}
+
+/**
+ * F1-style race layout from the corners: three equal sectors, Straight Mode
+ * zones on every straight of 200 m or more (from 30 m after the corner exit
+ * to 80 m before the next braking point), the speed trap near the end of the
+ * longest straight and the Overtake Mode detection point before the corner
+ * that leads onto it.
+ */
+export function autoRaceLayout(corners: Corner[], lap: number, closed: boolean): TrackElement[] {
+  const out: TrackElement[] = [
+    { id: newId(), type: 'sector', at: lap / 3 },
+    { id: newId(), type: 'sector', at: (2 * lap) / 3 },
+  ];
+  const wrap = (d: number) => (closed ? ((d % lap) + lap) % lap : Math.max(0, Math.min(lap, d)));
+  // Straights between consecutive corners (in driving order).
+  const cs = [...corners].sort((a, b) => a.apexDist - b.apexDist);
+  const straights: { from: number; to: number; len: number }[] = [];
+  for (let k = 0; k < cs.length; k++) {
+    const next = cs[k + 1] ?? (closed ? cs[0] : null);
+    const from = cs[k].to;
+    let to = next ? next.from : lap;
+    if (to < from) to += lap;
+    straights.push({ from, to, len: to - from });
+  }
+  if (!closed && cs.length) straights.push({ from: 0, to: cs[0].from, len: cs[0].from });
+  if (cs.length === 0) straights.push({ from: 0, to: lap, len: lap });
+  for (const s of straights) {
+    if (s.len < 200) continue;
+    out.push({ id: newId(), type: 'straightmode', from: wrap(s.from + 30), to: wrap(s.to - 80) });
+  }
+  const longest = straights.reduce((a, b) => (b.len > a.len ? b : a), straights[0]);
+  if (longest) {
+    out.push({ id: newId(), type: 'speedtrap', at: wrap(longest.to - Math.min(120, longest.len * 0.2)) });
+    out.push({ id: newId(), type: 'overtake', at: wrap(longest.from - 60) });
+  }
+  return out;
+}
+
+/** Position of a post beside the track, as a block so it can be drawn and extruded. */
+export function postBlock(p: PostElement, centre: LngLat[], closed: boolean, trackWidth: number): BlockElement | null {
+  const size = POST_SIZES[p.type];
+  const seg = sliceLine(centre, p.at - 2, p.at + 2, closed, 2);
+  if (seg.length < 2) return null;
+  const offset = trackWidth / 2 + size.gap + size.depth / 2;
+  const side = offsetLine(seg, offset, p.side);
+  const proj = new LocalProjection(seg[0]);
+  const [x1, y1] = proj.toXY(seg[0]);
+  const [x2, y2] = proj.toXY(seg[seg.length - 1]);
+  const bearing = ((Math.atan2(x2 - x1, y2 - y1) * 180) / Math.PI + 360) % 360;
+  return { id: p.id, type: 'pits', center: side[1], bearing, length: size.length, depth: size.depth };
+}
+
+/**
+ * Marshal posts in driving order: one on the outside of every corner and
+ * more along the straights so none is more than ~250 m from the next; a
+ * recovery crane on the outside of every corner, a little further back.
+ */
+export function autoMarshals(corners: Corner[], lap: number, closed: boolean): PostElement[] {
+  const wrap = (d: number) => (closed ? ((d % lap) + lap) % lap : Math.max(0, Math.min(lap, d)));
+  const posts: PostElement[] = [];
+  const cranes: PostElement[] = [];
+  for (const c of corners) {
+    const outside: Side = c.angle > 0 ? 'right' : 'left';
+    posts.push({ id: newId(), type: 'marshal', at: wrap(c.apexDist), side: outside });
+    cranes.push({ id: newId(), type: 'crane', at: wrap(c.apexDist + 25), side: outside });
+  }
+  // Fill long gaps (also covers a track without corners).
+  const sorted = [...posts].sort((a, b) => a.at - b.at);
+  const anchors = sorted.length ? sorted.map((p) => p.at) : [0];
+  const extra: PostElement[] = [];
+  for (let i = 0; i < anchors.length; i++) {
+    const a = anchors[i];
+    let b = anchors[i + 1] ?? (closed ? anchors[0] + lap : lap);
+    if (b <= a) b += lap;
+    const gap = b - a;
+    const n = Math.floor(gap / 250);
+    for (let k = 1; k <= n; k++) {
+      extra.push({ id: newId(), type: 'marshal', at: wrap(a + (gap * k) / (n + 1)), side: 'right' });
+    }
+  }
+  return [...posts, ...extra, ...cranes];
+}
+
+/** Marshal post numbers (1, 2, …) in driving order. */
+export function marshalNumbers(elements: TrackElement[]): Map<string, number> {
+  const posts = elements.filter((e): e is PostElement => e.type === 'marshal').sort((a, b) => a.at - b.at);
+  return new Map(posts.map((p, i) => [p.id, i + 1]));
 }

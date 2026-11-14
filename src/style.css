@@ -133,6 +133,13 @@ input[type='text'], input[type='search'] {
 .sw.pitlane { background: #3d4047; border-top: 2px dashed #fff; }
 .sw.pits { background: #e9eaec; }
 .sw.grandstand { background: #2f6fd6; }
+.sw.sector { background: linear-gradient(90deg, #e11d2e 0 33%, #16a3e0 33% 66%, #f2c200 66%); }
+.sw.speedtrap { background: #a855f7; }
+.sw.straightmode { background: #22c55e; }
+.sw.overtake { background: #f97316; }
+.sw.marshal { background: #f97316; border-radius: 50%; width: 12px; }
+.sw.crane { background: #facc15; }
+.elements h2.sub { margin-top: 4px; }
 .kerb-colors { align-self: stretch; }
 .kerb-colors button { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; }
 .selection { border: 2px solid #facc15; border-radius: 10px; padding: 8px; display: flex; flex-direction: column; gap: 8px; }
@@ -156,9 +163,23 @@ button.poster-btn { width: 100%; padding: 10px; font-weight: 600; }
 .poster-side { display: flex; flex-direction: column; gap: 12px; }
 .seg.flat { box-shadow: none; border: 1px solid var(--line); align-self: flex-start; }
 
+#play[aria-pressed='true'] { background: var(--accent); color: var(--accent-fg); }
+.lap-hud {
+  position: absolute; bottom: 28px; left: 50%; transform: translateX(-50%); z-index: 2;
+  display: flex; align-items: flex-end; gap: 22px; padding: 10px 18px 14px;
+  background: rgba(13, 15, 18, 0.82); color: #fff; border-radius: 12px; box-shadow: var(--shadow);
+  font-variant-numeric: tabular-nums; pointer-events: none;
+}
+.lap-hud span { font-size: 28px; font-weight: 800; letter-spacing: -0.02em; }
+.lap-hud small { font-size: 11px; color: #aab0bb; margin-left: 5px; text-transform: uppercase; }
+.lap-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(255,255,255,.15); border-radius: 0 0 12px 12px; overflow: hidden; }
+.lap-bar i { display: block; height: 100%; width: 0; background: var(--accent); }
+.car-marker { width: 16px; height: 16px; border-radius: 50%; background: #e11d2e; border: 3px solid #fff; box-shadow: 0 0 0 2px rgba(0,0,0,.35), 0 2px 8px rgba(0,0,0,.5); }
+
 @media (max-width: 640px) {
   .poster-body { grid-template-columns: 1fr; }
   .poster-preview canvas { max-height: 60dvh; }
   .panel { top: auto; bottom: 0; left: 0; right: 0; width: auto; max-height: 55%; border-radius: 14px 14px 0 0; }
   .view-switch { right: 50px; top: 10px; }
+  .lap-hud { top: 60px; bottom: auto; }
 }

@@ -1,4 +1,4 @@
-import { type LngLat, type Sample, smoothTrack, lineLength } from './geometry';
+import { type LngLat, type Sample, roundCorners, smoothTrack, lineLength } from './geometry';
 import { type TrackElement, parseElements } from './elements';
 
 export interface Circuit {
@@ -78,7 +78,9 @@ export function segments(c: Circuit): [LngLat, LngLat][] {
  * where available and a straight line where it isn't (yet).
  */
 export function buildCentreline(c: Circuit, routes: Map<string, LngLat[]>): Sample[] {
-  if (!c.snapToRoads) return smoothTrack(c.points, c.closed);
+  // Corners are rounded to a radius that depends on the track width, so the
+  // asphalt never folds over itself on the inside of a bend.
+  if (!c.snapToRoads) return roundCorners(smoothTrack(c.points, c.closed), c.closed, c.width * 0.6);
   const segs = segments(c);
   if (segs.length === 0) return c.points.map((coord) => ({ coord, seg: 0 }));
   const out: Sample[] = [];
@@ -87,7 +89,8 @@ export function buildCentreline(c: Circuit, routes: Map<string, LngLat[]>): Samp
     const start = s === 0 ? 0 : 1; // skip the shared junction point
     for (let i = start; i < path.length; i++) out.push({ coord: path[i], seg: s });
   });
-  return out;
+  // Street routes turn at sharp intersection corners: round them off.
+  return roundCorners(out, c.closed && c.points.length > 2, Math.max(12, c.width * 1.5));
 }
 
 export function circuitLength(samples: Sample[]): number {

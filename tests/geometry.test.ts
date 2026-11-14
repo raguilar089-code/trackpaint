@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { type LngLat, distance, lineLength, ribbonEdges, simplify, smoothTrack } from '../src/geometry';
+import { type LngLat, distance, lineLength, ribbonEdges, roundCorners, simplify, smoothTrack } from '../src/geometry';
 import { History, buildCentreline, newCircuit, parseCircuit, segmentKey } from '../src/circuit';
 import { decodePolyline } from '../src/services';
 
@@ -69,7 +69,11 @@ describe('circuit', () => {
     const c = { ...newCircuit(), points: square.slice(0, 2), snapToRoads: true };
     const mid: LngLat = [-3.6988, 40.4005];
     const routes = new Map([[segmentKey(square[0], square[1]), [square[0], mid, square[1]]]]);
-    expect(buildCentreline(c, routes).map((s) => s.coord)).toEqual([square[0], mid, square[1]]);
+    const line = buildCentreline(c, routes).map((s) => s.coord);
+    // Ends stay on the control points; the path bends towards the routed midpoint.
+    expect(line[0]).toEqual(square[0]);
+    expect(line[line.length - 1]).toEqual(square[1]);
+    expect(Math.max(...line.map((p) => p[1]))).toBeGreaterThan(40.4 + 0.0001);
   });
 
   it('rejects invalid files and clamps width', () => {
@@ -115,5 +119,23 @@ describe('decodePolyline', () => {
       [-120.95, 40.7],
       [-126.453, 43.252],
     ]);
+  });
+});
+
+describe('roundCorners', () => {
+  it('rounds a right-angle street corner but keeps the straights', () => {
+    const l: LngLat[] = [
+      ...Array.from({ length: 51 }, (_, i): LngLat => [-3.7 + i * 0.00002, 40.4]),
+      ...Array.from({ length: 50 }, (_, i): LngLat => [-3.699, 40.4 + (i + 1) * 0.00002]),
+    ];
+    const corner: LngLat = [-3.699, 40.4];
+    const out = roundCorners(l.map((coord) => ({ coord, seg: 0 })), false, 18);
+    const nearest = Math.min(...out.map((s) => distance(s.coord, corner)));
+    expect(nearest).toBeGreaterThan(3); // the sharp vertex is cut off
+    expect(out[0].coord).toEqual(l[0]);
+    expect(out[out.length - 1].coord).toEqual(l[l.length - 1]);
+    // Far from the corner the line is unchanged.
+    const farPoint = out.find((s) => distance(s.coord, l[5]) < 1);
+    expect(farPoint).toBeDefined();
   });
 });

@@ -7,8 +7,21 @@ import {
   ELEMENT_LABELS,
   PITLANE_WIDTH,
   type TrackElement,
+  OVERTAKE_COLOR,
+  SECTOR_COLORS,
+  SPEEDTRAP_COLOR,
+  STRAIGHT_MODE_COLOR,
+  CRANE_COLOR,
+  MARSHAL_COLOR,
+  POST_SIZES,
   blockRing,
+  crossLine,
+  marshalNumbers,
+  postBlock,
   kerbStripes,
+  sectorBounds,
+  sectorLines,
+  sliceLine,
 } from './elements';
 
 const OSM_ATTR = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
@@ -62,6 +75,10 @@ const SOURCES = [
   'tp-blocks',
   'tp-labels',
   'tp-selected',
+  'tp-sectors',
+  'tp-zones',
+  'tp-markers',
+  'tp-marker-labels',
 ] as const;
 
 /** Line width in pixels that matches `m` metres on the ground at latitude `lat`. */
@@ -151,6 +168,21 @@ export function addTrackLayers(map: MLMap) {
       'line-width': ['interpolate', ['linear'], ['zoom'], 13, 0.5, 18, 2.5],
     },
   });
+  // Straight Mode zones: translucent green band over the asphalt.
+  map.addLayer({
+    id: 'tp-zones',
+    type: 'fill',
+    source: 'tp-zones',
+    paint: { 'fill-color': STRAIGHT_MODE_COLOR, 'fill-opacity': 0.35, 'fill-antialias': false },
+  });
+  // Sector colours as a stripe down the middle of the track.
+  map.addLayer({
+    id: 'tp-sectors',
+    type: 'line',
+    source: 'tp-sectors',
+    layout: { 'line-cap': 'butt', 'line-join': 'round' },
+    paint: { 'line-color': ['get', 'color'], 'line-width': metres(1.2, lastLat, 2), 'line-opacity': 0.9 },
+  });
   map.addLayer({
     id: 'tp-kerbs',
     type: 'fill',
@@ -229,11 +261,43 @@ export function addTrackLayers(map: MLMap) {
     paint: { 'line-color': '#e11d2e', 'line-width': 6, 'line-opacity': 0.75 },
   });
   map.addLayer({
+    id: 'tp-markers',
+    type: 'line',
+    source: 'tp-markers',
+    layout: { 'line-cap': 'round' },
+    paint: { 'line-color': ['get', 'color'], 'line-width': ['interpolate', ['linear'], ['zoom'], 13, 2, 18, 5] },
+  });
+  map.addLayer({
+    id: 'tp-marker-labels',
+    type: 'symbol',
+    source: 'tp-marker-labels',
+    minzoom: 14,
+    layout: {
+      'text-field': ['get', 'label'],
+      'text-font': ['Noto Sans Bold'],
+      'text-size': 11,
+      'text-anchor': 'left',
+      'text-offset': [0.6, 0],
+      'text-allow-overlap': false,
+    },
+    paint: { 'text-color': ['get', 'color'], 'text-halo-color': '#111111', 'text-halo-width': 1.6 },
+  });
+  map.addLayer({
     id: 'tp-blocks',
     type: 'fill-extrusion',
     source: 'tp-blocks',
     paint: {
-      'fill-extrusion-color': ['match', ['get', 'type'], 'grandstand', '#2f6fd6', '#e9eaec'],
+      'fill-extrusion-color': [
+        'match',
+        ['get', 'type'],
+        'grandstand',
+        '#2f6fd6',
+        'marshal',
+        MARSHAL_COLOR,
+        'crane',
+        CRANE_COLOR,
+        '#e9eaec',
+      ],
       'fill-extrusion-height': ['get', 'height'],
       'fill-extrusion-opacity': 0.92,
     },
@@ -351,6 +415,23 @@ export function elementOutline(e: TrackElement, centre: LngLat[], closed: boolea
     case 'pits':
     case 'grandstand':
       return poly(blockRing(e), { id: e.id });
+    case 'sector':
+    case 'speedtrap':
+    case 'overtake': {
+      const l = crossLine(centre, e.at, closed, width, 6);
+      return l.length ? lineF(l, { id: e.id }) : null;
+    }
+    case 'marshal':
+    case 'crane': {
+      const b = postBlock(e, centre, closed, width);
+      return b ? poly(blockRing(b), { id: e.id }) : null;
+    }
+    case 'straightmode': {
+      const path = sliceLine(centre, e.from, e.to, closed, 3);
+      if (path.length < 2) return null;
+      const { left, right } = ribbonEdges(path, width + 2);
+      return poly([...left, ...right.reverse(), left[0]], { id: e.id });
+    }
     default:
       return lineF(e.coords, { id: e.id });
   }
@@ -371,8 +452,60 @@ export function renderElements(
   const lines: Feature[] = [];
   const blocks: Feature[] = [];
   const labels: Feature[] = [];
+  const zones: Feature[] = [];
+  const markers: Feature[] = [];
+  const markerLabels: Feature[] = [];
+  const markerLabel = (line: LngLat[], label: string, color: string, id: string) => {
+    markers.push(lineF(line, { id, color }));
+    markerLabels.push({ type: 'Feature', properties: { id, label, color }, geometry: { type: 'Point', coordinates: line[0] } });
+  };
+  const bounds = sectorBounds(elements);
+  const sectors = bounds.length === 2 ? sectorLines(centre, bounds) : [];
+  let zoneNo = 0;
+  const postNo = marshalNumbers(elements);
+  const sortedZones = elements
+    .filter((e) => e.type === 'straightmode')
+    .sort((a, b) => (a as { from: number }).from - (b as { from: number }).from)
+    .map((e) => e.id);
   for (const e of elements) {
     switch (e.type) {
+      case 'sector': {
+        const l = crossLine(centre, e.at, closed, width, 6);
+        const k = bounds.indexOf(e.at);
+        if (l.length) markerLabel(l, k >= 0 ? `S${k + 2}` : 'Sector', SECTOR_COLORS[k >= 0 ? k + 1 : 0], e.id);
+        break;
+      }
+      case 'speedtrap': {
+        const l = crossLine(centre, e.at, closed, width, 6);
+        if (l.length) markerLabel(l, 'SPEED TRAP', SPEEDTRAP_COLOR, e.id);
+        break;
+      }
+      case 'overtake': {
+        const l = crossLine(centre, e.at, closed, width, 6);
+        if (l.length) markerLabel(l, 'DETECCIÓN OVERTAKE', OVERTAKE_COLOR, e.id);
+        break;
+      }
+      case 'marshal':
+      case 'crane': {
+        const b = postBlock(e, centre, closed, width);
+        if (!b) break;
+        blocks.push(poly(blockRing(b), { id: e.id, type: e.type, height: POST_SIZES[e.type].height }));
+        labels.push({
+          type: 'Feature',
+          properties: { id: e.id, label: e.type === 'marshal' ? `P${postNo.get(e.id)}` : 'GRÚA', rotate: 0 },
+          geometry: { type: 'Point', coordinates: b.center },
+        });
+        break;
+      }
+      case 'straightmode': {
+        const path = sliceLine(centre, e.from, e.to, closed, 3);
+        if (path.length < 2) break;
+        for (const q of ribbonQuads(path, width)) zones.push(poly(q, { id: e.id }));
+        zoneNo = sortedZones.indexOf(e.id) + 1;
+        const start = crossLine(centre, e.from, closed, width, 6);
+        if (start.length) markerLabel(start, `STRAIGHT MODE ${zoneNo}`, STRAIGHT_MODE_COLOR, e.id);
+        break;
+      }
       case 'kerb':
         for (const s of kerbStripes(e, centre, closed, width)) kerbs.push(poly(s.ring, { id: e.id, color: s.color }));
         break;
@@ -405,6 +538,13 @@ export function renderElements(
         lines.push(lineF(e.coords, { id: e.id, type: e.type }));
     }
   }
+  setData(map, 'tp-zones', { type: 'FeatureCollection', features: zones });
+  setData(map, 'tp-markers', { type: 'FeatureCollection', features: markers });
+  setData(map, 'tp-marker-labels', { type: 'FeatureCollection', features: markerLabels });
+  setData(map, 'tp-sectors', {
+    type: 'FeatureCollection',
+    features: sectors.filter((l) => l.length > 1).map((l, i) => lineF(l, { color: SECTOR_COLORS[i] })),
+  });
   const fc = (features: Feature[]): GeoJSON.FeatureCollection => ({ type: 'FeatureCollection', features });
   setData(map, 'tp-areas', fc(areas));
   setData(map, 'tp-pitlane', fc(pitlane));
