@@ -19,6 +19,8 @@ import {
   sliceLine,
 } from './elements';
 
+import type { CityLayer } from './city';
+
 export type PosterTheme = 'oscuro' | 'claro';
 
 export interface PosterInfo {
@@ -34,6 +36,8 @@ export interface PosterInfo {
   elements: TrackElement[];
   /** Track centreline, needed to place kerbs. */
   centre: LngLat[];
+  /** Streets and buildings around the track, drawn faintly behind it. */
+  streets?: CityLayer | null;
 }
 
 export const POSTER_W = 2000;
@@ -224,6 +228,94 @@ function elementPoints(e: TrackElement): LngLat[] {
   }
 }
 
+const CITY = {
+  oscuro: {
+    water: '#122233',
+    park: '#13201a',
+    building: 'rgba(255,255,255,0.055)',
+    road: 'rgba(255,255,255,0.16)',
+    major: 'rgba(255,255,255,0.26)',
+  },
+  claro: {
+    water: '#d3e3ee',
+    park: '#e2eadb',
+    building: 'rgba(20,23,28,0.07)',
+    road: 'rgba(20,23,28,0.16)',
+    major: 'rgba(20,23,28,0.26)',
+  },
+} as const;
+
+/** The city map behind the track: water, parks, buildings and streets, fading out at the edges. */
+function drawCity(
+  ctx: CanvasRenderingContext2D,
+  city: CityLayer,
+  area: { x: number; y: number; w: number; h: number },
+  theme: PosterTheme,
+  P: (c: LngLat) => [number, number],
+  scale: number,
+) {
+  const c = CITY[theme];
+  ctx.save();
+  roundRect(ctx, area.x, area.y, area.w, area.h, 28);
+  ctx.clip();
+  const rings = (polys: LngLat[][][]) => {
+    ctx.beginPath();
+    for (const poly of polys) {
+      for (const ring of poly) {
+        ring.forEach((q, i) => {
+          const [x, y] = P(q);
+          if (i) ctx.lineTo(x, y);
+          else ctx.moveTo(x, y);
+        });
+        ctx.closePath();
+      }
+    }
+  };
+  ctx.fillStyle = c.park;
+  rings(city.parks);
+  ctx.fill('evenodd');
+  ctx.fillStyle = c.water;
+  rings(city.water);
+  ctx.fill('evenodd');
+  ctx.fillStyle = c.building;
+  rings(city.buildings);
+  ctx.fill('evenodd');
+  // Street widths in metres, drawn to scale but never thinner than a hairline.
+  const widths = { service: 4, minor: 7, medium: 11, major: 16 } as const;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  for (const kind of ['service', 'minor', 'medium', 'major'] as const) {
+    ctx.strokeStyle = kind === 'major' || kind === 'medium' ? c.major : c.road;
+    ctx.lineWidth = Math.max(kind === 'service' ? 1 : 1.6, widths[kind] * scale);
+    ctx.beginPath();
+    for (const r of city.roads) {
+      if (r.kind !== kind) continue;
+      r.coords.forEach((q, i) => {
+        const [x, y] = P(q);
+        if (i) ctx.lineTo(x, y);
+        else ctx.moveTo(x, y);
+      });
+    }
+    ctx.stroke();
+  }
+  // Fade into the poster background towards the edges.
+  const bg = THEMES[theme].bg;
+  const fade = 160;
+  const edge = (x0: number, y0: number, x1: number, y1: number, x: number, y: number, w: number, h: number) => {
+    const g = ctx.createLinearGradient(x0, y0, x1, y1);
+    g.addColorStop(0, bg);
+    g.addColorStop(1, bg + '00');
+    ctx.fillStyle = g;
+    ctx.fillRect(x, y, w, h);
+  };
+  const { x, y, w, h } = area;
+  edge(x, y, x + fade, y, x, y, fade, h);
+  edge(x + w, y, x + w - fade, y, x + w - fade, y, fade, h);
+  edge(x, y, x, y + fade, x, y, w, fade);
+  edge(x, y + h, x, y + h - fade, x, y + h - fade, w, fade);
+  ctx.restore();
+}
+
 function drawTrack(
   ctx: CanvasRenderingContext2D,
   a: TrackAnalysis,
@@ -269,6 +361,8 @@ function drawTrack(
     grass: theme === 'oscuro' ? '#1f3d26' : '#b9d7b4',
   };
   const ONTOP = theme === 'oscuro' ? '#c7cbd1' : '#6b7280';
+
+  if (info.streets) drawCity(ctx, info.streets, area, theme, (c) => P(a.projection.toXY(c)), scale);
 
   // Areas and pit lane go under the track.
   for (const e of info.elements) {

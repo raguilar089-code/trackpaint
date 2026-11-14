@@ -13,7 +13,7 @@ import {
   segmentKey,
   segments,
 } from './circuit';
-import { type LngLat, type Sample, bearing, simplify } from './geometry';
+import { type LngLat, LocalProjection, type Sample, bearing, simplify } from './geometry';
 import { STYLES, addTrackLayers, renderElements, renderStroke, renderTrack, usePattern } from './render';
 import {
   ELEMENT_LABELS,
@@ -37,6 +37,8 @@ import { type Locality, flagUrl, reverseGeocode, routeSegment, searchPlaces } fr
 import { analyzeTrack } from './analysis';
 import { type LapProfile, carAt, formatLapTime, lapProfile } from './lap';
 import { LapHud } from './hud';
+import { MODEL_TYPES, ModelLayer } from './scene3d';
+import { type CityLayer, captureCity } from './city';
 import { type PosterTheme, drawPoster } from './poster';
 import * as storage from './storage';
 
@@ -78,8 +80,21 @@ const map = new maplibregl.Map({
 map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
 map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-right');
 
+// Unity models for walls, barriers, tyres, garages and grandstands.
+const models = new ModelLayer();
+models.onModels = (shown) => {
+  if (!map.getLayer('tp-blocks')) return;
+  // With the models on the map the flat boxes only remain as a thin, clickable footprint.
+  map.setPaintProperty(
+    'tp-blocks',
+    'fill-extrusion-height',
+    shown ? ['match', ['get', 'type'], [...MODEL_TYPES], 0.3, ['get', 'height']] : ['get', 'height'],
+  );
+};
+
 map.on('style.load', () => {
   addTrackLayers(map);
+  map.addLayer(models);
   // Textures from Circuit Tycoon, downscaled to small repeating tiles.
   const base = import.meta.env.BASE_URL;
   void usePattern(map, 'tp-gravel', 'tp-gravel', `${base}assets/patterns/gravel.png`);
@@ -95,6 +110,7 @@ function redraw() {
   if (map.getSource('tp-points')) {
     renderTrack(map, circuit, samples, tool !== 'pan' && tool !== 'element');
     renderElements(map, circuit.elements, centre(), circuit.closed, circuit.width, selectedId);
+    void models.update(circuit.elements, centre());
   }
   updateStats();
 }
@@ -850,7 +866,38 @@ function drawCurrentPoster() {
     theme: posterTheme,
     elements: circuit.elements,
     centre: centre(),
+    streets: $<HTMLInputElement>('poster-city-bg').checked ? posterCity?.value : null,
   });
+}
+
+/** Streets around the track for the poster, keyed by the track shape. */
+let posterCity: { key: string; value: CityLayer | null } | null = null;
+
+/** Area the poster shows around the track (a little larger, roughly square). */
+function posterBounds(): [LngLat, LngLat] {
+  const line = centre();
+  const proj = new LocalProjection(line[0]);
+  const xy = line.map((p) => proj.toXY(p));
+  const xs = xy.map((p) => p[0]);
+  const ys = xy.map((p) => p[1]);
+  const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+  const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+  const half = (Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) / 2) * 1.25 + 60;
+  return [proj.toLngLat([cx - half, cy - half]), proj.toLngLat([cx + half, cy + half])];
+}
+
+async function loadPosterCity() {
+  const key = JSON.stringify([circuit.points, circuit.closed, circuit.snapToRoads]);
+  if (posterCity?.key === key || !$<HTMLInputElement>('poster-city-bg').checked) return;
+  $('poster-status').textContent = 'Cargando las calles de alrededor…';
+  let value: CityLayer | null = null;
+  try {
+    value = await captureCity(map, posterBounds());
+  } catch {
+    value = null;
+  }
+  posterCity = { key, value };
+  $('poster-status').textContent = value ? '' : 'No se pudieron cargar las calles de alrededor.';
 }
 
 async function loadFlag(code: string) {
@@ -896,7 +943,15 @@ async function openPoster() {
   }
   await loadFlag(locality.value?.countryCode ?? '');
   drawCurrentPoster();
+  await loadPosterCity();
+  drawCurrentPoster();
 }
+
+$<HTMLInputElement>('poster-city-bg').onchange = async () => {
+  drawCurrentPoster();
+  await loadPosterCity();
+  drawCurrentPoster();
+};
 
 function setPosterTheme(theme: PosterTheme) {
   posterTheme = theme;
@@ -1108,7 +1163,7 @@ updateUi();
 if (circuit.snapToRoads) void fetchMissingRoutes();
 
 // Exposed for automated checks and debugging in the browser console.
-Object.assign(window, { trackpaint: { map, get circuit() { return circuit; }, loadCircuit, get lap() { return lap; } } });
+Object.assign(window, { trackpaint: { map, get circuit() { return circuit; }, loadCircuit, get lap() { return lap; }, get centre() { return centre(); } } });
 
 // ---------- Keyboard panning (WASD, Shift to go faster) ----------
 

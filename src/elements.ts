@@ -107,7 +107,7 @@ export const KERB_WIDTH = 1.2;
 const KERB_STRIPE = 2;
 export const PITLANE_WIDTH = 8;
 export const BLOCK_SIZES: Record<BlockElement['type'], { length: number; depth: number; height: number; gap: number }> = {
-  pits: { length: 90, depth: 16, height: 7, gap: PITLANE_WIDTH + 4 },
+  pits: { length: 135, depth: 14, height: 7, gap: PITLANE_WIDTH + 4 },
   grandstand: { length: 60, depth: 14, height: 12, gap: 6 },
 };
 

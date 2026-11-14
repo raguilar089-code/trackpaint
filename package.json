@@ -11,10 +11,12 @@
   },
   "dependencies": {
     "flag-icons": "^7.6.0",
-    "maplibre-gl": "^6.18.0"
+    "maplibre-gl": "^6.18.0",
+    "three": "^0.170.0"
   },
   "devDependencies": {
     "@types/geojson": "^7946.0.16",
+    "@types/three": "^0.170.0",
     "typescript": "^5.9.3",
     "vite": "^6.4.6",
     "vitest": "^5.1.0"
