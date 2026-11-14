@@ -115,7 +115,24 @@ input[type='text'], input[type='search'] {
 .seg button { border: 0; background: none; padding: 6px 12px; }
 .seg button[aria-pressed='true'] { background: var(--fg); color: var(--bg); }
 
+button.poster-btn { width: 100%; padding: 10px; font-weight: 600; }
+
+.poster-dialog {
+  border: 0; padding: 0; border-radius: 16px; background: var(--bg); color: var(--fg);
+  width: min(980px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); box-shadow: var(--shadow);
+}
+.poster-dialog::backdrop { background: rgba(10, 12, 16, 0.6); }
+.poster-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px 0; }
+.poster-head h2 { margin: 0; font-size: 18px; }
+.poster-body { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 18px; padding: 14px 18px 18px; }
+.poster-preview { display: flex; justify-content: center; align-items: flex-start; background: var(--soft); border-radius: 10px; padding: 12px; }
+.poster-preview canvas { width: 100%; max-width: 520px; height: auto; max-height: calc(100dvh - 140px); object-fit: contain; border-radius: 4px; box-shadow: 0 4px 16px rgba(0,0,0,.25); }
+.poster-side { display: flex; flex-direction: column; gap: 12px; }
+.seg.flat { box-shadow: none; border: 1px solid var(--line); align-self: flex-start; }
+
 @media (max-width: 640px) {
+  .poster-body { grid-template-columns: 1fr; }
+  .poster-preview canvas { max-height: 60dvh; }
   .panel { top: auto; bottom: 0; left: 0; right: 0; width: auto; max-height: 55%; border-radius: 14px 14px 0 0; }
   .view-switch { right: 50px; top: 10px; }
 }

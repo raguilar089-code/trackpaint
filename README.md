@@ -2,7 +2,7 @@
 
 Diseña circuitos de carreras, urbanos o permanentes, sobre un mapa real.
 
-## Qué hace (paso 1)
+## Qué hace
 
 - Mapa real (OpenStreetMap) o vista satélite, en 2D o inclinado en 3D con edificios.
 - Buscador de ciudades, calles y lugares.
@@ -11,6 +11,7 @@ Diseña circuitos de carreras, urbanos o permanentes, sobre un mapa real.
 - **Pintar** la pista a mano alzada arrastrando sobre el mapa, o colocarla punto a punto.
 - Edición: arrastrar puntos, insertar haciendo clic sobre la pista, borrar con doble clic o clic derecho, deshacer y rehacer.
 - Longitud del circuito.
+- **Exportar póster** en PNG (2000 × 2828 px), oscuro o claro: trazado con curvas numeradas, salida/meta y sentido de giro, bandera y nombre del país, ciudad, longitud, número de curvas, recta más larga y sentido de giro.
 - Guardar circuitos en el navegador y exportarlos o importarlos como archivo `.trackpaint.json`.
 
 ## Desarrollo

@@ -80,7 +80,7 @@ export async function readJsonFile(file: File): Promise<Circuit> {
   return parseCircuit(data);
 }
 
-function slug(s: string) {
+export function slug(s: string) {
   return s
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')

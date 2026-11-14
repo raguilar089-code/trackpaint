@@ -15,7 +15,9 @@ import {
 } from './circuit';
 import { type LngLat, type Sample, simplify } from './geometry';
 import { STYLES, addTrackLayers, renderStroke, renderTrack } from './render';
-import { routeSegment, searchPlaces } from './services';
+import { type Locality, flagUrl, reverseGeocode, routeSegment, searchPlaces } from './services';
+import { analyzeTrack } from './analysis';
+import { type PosterTheme, drawPoster } from './poster';
 import * as storage from './storage';
 
 type Tool = 'paint' | 'draw' | 'edit' | 'pan';
@@ -489,6 +491,109 @@ window.addEventListener('keydown', (e) => {
     setTool('edit');
   }
 });
+
+// ---------- Poster ----------
+
+const posterDialog = $<HTMLDialogElement>('poster-dialog');
+const posterCanvas = $<HTMLCanvasElement>('poster-canvas');
+let posterTheme: PosterTheme = 'oscuro';
+let posterFlag: HTMLImageElement | null = null;
+let posterFlagCode = '';
+/** Last reverse-geocoded place, keyed by the rounded start point. */
+let locality: { key: string; value: Locality | null } | null = null;
+
+function drawCurrentPoster() {
+  const analysis = analyzeTrack(
+    samples.map((s) => s.coord),
+    circuit.closed,
+  );
+  drawPoster(posterCanvas, analysis, {
+    name: $<HTMLInputElement>('poster-name').value.trim() || circuit.name,
+    city: $<HTMLInputElement>('poster-city').value.trim(),
+    country: $<HTMLInputElement>('poster-country').value.trim(),
+    flag: posterFlag,
+    width: circuit.width,
+    theme: posterTheme,
+  });
+}
+
+async function loadFlag(code: string) {
+  if (code === posterFlagCode) return;
+  posterFlagCode = code;
+  posterFlag = null;
+  const url = code ? await flagUrl(code) : null;
+  if (!url) return;
+  const img = new Image();
+  img.src = url;
+  try {
+    await img.decode();
+    if (posterFlagCode === code) posterFlag = img;
+  } catch {
+    /* draw without a flag */
+  }
+}
+
+async function openPoster() {
+  if (samples.length < 2) {
+    setStatus('Dibuja primero un trazado.');
+    return;
+  }
+  $<HTMLInputElement>('poster-name').value = circuit.name;
+  setPosterTheme(posterTheme);
+  posterDialog.showModal();
+  drawCurrentPoster();
+
+  const start = circuit.points[0];
+  const key = `${start[0].toFixed(3)},${start[1].toFixed(3)}`;
+  if (locality?.key !== key) {
+    $('poster-status').textContent = 'Buscando ciudad y país…';
+    let value: Locality | null = null;
+    try {
+      value = await reverseGeocode(start);
+    } catch {
+      value = null;
+    }
+    locality = { key, value };
+    $<HTMLInputElement>('poster-city').value = value?.city ?? '';
+    $<HTMLInputElement>('poster-country').value = value?.country ?? '';
+    $('poster-status').textContent = value ? '' : 'No se pudo detectar el lugar. Puedes escribirlo a mano.';
+  }
+  await loadFlag(locality.value?.countryCode ?? '');
+  drawCurrentPoster();
+}
+
+function setPosterTheme(theme: PosterTheme) {
+  posterTheme = theme;
+  document.querySelectorAll<HTMLButtonElement>('[data-theme]').forEach((b) => {
+    b.setAttribute('aria-pressed', String(b.dataset.theme === theme));
+  });
+}
+
+$('poster').onclick = () => void openPoster();
+$('poster-close').onclick = () => posterDialog.close();
+posterDialog.addEventListener('click', (e) => {
+  if (e.target === posterDialog) posterDialog.close(); // click on the backdrop
+});
+document.querySelectorAll<HTMLButtonElement>('[data-theme]').forEach((b) => {
+  b.onclick = () => {
+    setPosterTheme(b.dataset.theme as PosterTheme);
+    drawCurrentPoster();
+  };
+});
+for (const id of ['poster-name', 'poster-city', 'poster-country']) {
+  $<HTMLInputElement>(id).addEventListener('input', drawCurrentPoster);
+}
+$('poster-download').onclick = () => {
+  posterCanvas.toBlob((blob) => {
+    if (!blob) return;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    const name = $<HTMLInputElement>('poster-name').value.trim() || circuit.name;
+    a.download = `${storage.slug(name) || 'circuito'}-poster.png`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }, 'image/png');
+};
 
 // ---------- Search ----------
 

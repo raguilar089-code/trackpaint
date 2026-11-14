@@ -78,3 +78,37 @@ export async function searchPlaces(query: string): Promise<Place[]> {
     return place;
   });
 }
+
+export interface Locality {
+  city: string;
+  country: string;
+  /** ISO 3166-1 alpha-2, lower case (e.g. "es"). */
+  countryCode: string;
+}
+
+/** City and country at a point (Nominatim reverse geocoding). */
+export async function reverseGeocode(p: LngLat): Promise<Locality | null> {
+  const url = `https://nominatim.openstreetmap.org/reverse?format=json&zoom=10&accept-language=es&lat=${p[1]}&lon=${p[0]}`;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const body = await res.json();
+  const a = body?.address;
+  if (!a) return null;
+  return {
+    city: a.city ?? a.town ?? a.village ?? a.municipality ?? a.county ?? a.state ?? '',
+    country: a.country ?? '',
+    countryCode: String(a.country_code ?? '').toLowerCase(),
+  };
+}
+
+// Flag SVGs ship with the app; each one is only downloaded when used.
+const FLAGS = import.meta.glob('../node_modules/flag-icons/flags/4x3/*.svg', {
+  query: '?url',
+  import: 'default',
+}) as Record<string, () => Promise<string>>;
+
+/** URL of the country's flag (4:3 SVG), or null if unknown. */
+export async function flagUrl(countryCode: string): Promise<string | null> {
+  const load = FLAGS[`../node_modules/flag-icons/flags/4x3/${countryCode.toLowerCase()}.svg`];
+  return load ? load() : null;
+}

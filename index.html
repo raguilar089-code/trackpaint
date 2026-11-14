@@ -55,6 +55,7 @@
           <button id="redo" title="Rehacer (Ctrl+Y)">↷ Rehacer</button>
           <button id="fit" title="Encuadrar el circuito">⤢ Encuadrar</button>
         </div>
+        <button id="poster" class="poster-btn">🖼️ Exportar póster</button>
         <div class="row">
           <button id="save" class="primary">💾 Guardar</button>
           <button id="new">＋ Nuevo</button>
@@ -82,6 +83,30 @@
         <button data-view="3d">3D</button>
       </div>
     </div>
+
+    <dialog id="poster-dialog" class="poster-dialog">
+      <div class="poster-head">
+        <h2>Póster del circuito</h2>
+        <button id="poster-close" class="icon-btn" aria-label="Cerrar">✕</button>
+      </div>
+      <div class="poster-body">
+        <div class="poster-preview"><canvas id="poster-canvas"></canvas></div>
+        <div class="poster-side">
+          <label class="field"><span>Nombre</span><input id="poster-name" type="text" maxlength="80" /></label>
+          <label class="field"><span>Ciudad</span><input id="poster-city" type="text" maxlength="80" /></label>
+          <label class="field"><span>País</span><input id="poster-country" type="text" maxlength="60" /></label>
+          <div class="field">
+            <span>Estilo</span>
+            <div class="seg flat" role="group" aria-label="Estilo">
+              <button data-theme="oscuro">Oscuro</button>
+              <button data-theme="claro">Claro</button>
+            </div>
+          </div>
+          <p id="poster-status" class="hint"></p>
+          <button id="poster-download" class="primary">⬇ Descargar PNG</button>
+        </div>
+      </div>
+    </dialog>
 
     <script type="module" src="/src/main.ts"></script>
   </body>
