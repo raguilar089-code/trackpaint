@@ -32,7 +32,7 @@ Todos son gratuitos y no necesitan clave:
 - Mapa: [OpenFreeMap](https://openfreemap.org) con datos de © OpenStreetMap.
 - Satélite: Esri World Imagery.
 - Búsqueda: Nominatim (OpenStreetMap).
-- Seguir calles: servidor de demostración de OSRM.
+- Seguir calles: Valhalla de FOSSGIS (valhalla1.openstreetmap.de), por calles de coches pero ignorando sentidos únicos, giros prohibidos y cortes, para que el trazado pueda ir en cualquier sentido.
 
-Nominatim y OSRM son servicios de uso ligero; la app solo los llama cuando el
+Nominatim y Valhalla son servicios de uso ligero; la app solo los llama cuando el
 usuario busca o termina de mover un punto.

@@ -1,5 +1,7 @@
-import maplibregl, { type MapMouseEvent, type MapTouchEvent } from 'maplibre-gl';
+import * as maplibregl from 'maplibre-gl';
+import type { MapMouseEvent, MapTouchEvent } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
+import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import './style.css';
 
 import {
@@ -32,6 +34,9 @@ const routes = new Map<string, LngLat[]>();
 const pendingRoutes = new Set<string>();
 
 // ---------- Map ----------
+
+// MapLibre finds its worker relative to its own file, which bundling breaks.
+maplibregl.setWorkerUrl(workerUrl);
 
 const map = new maplibregl.Map({
   container: 'map',
@@ -92,6 +97,7 @@ async function fetchMissingRoutes() {
     if (!circuit.snapToRoads) return;
     redraw();
   }
+  if (pendingRoutes.size === 0 && $('status').textContent === 'Buscando calles…') setStatus('');
 }
 
 // ---------- Editing on the map ----------

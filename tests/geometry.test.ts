@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { type LngLat, distance, lineLength, ribbonEdges, simplify, smoothTrack } from '../src/geometry';
 import { History, buildCentreline, newCircuit, parseCircuit, segmentKey } from '../src/circuit';
+import { decodePolyline } from '../src/services';
 
 // Roughly a 200 m square near Madrid.
 const square: LngLat[] = [
@@ -103,5 +104,16 @@ describe('simplify', () => {
     const out = simplify(stroke, 2);
     expect(out.length).toBe(3);
     expect(out[1]).toEqual([-3.698, 40.4]);
+  });
+});
+
+describe('decodePolyline', () => {
+  it('decodes the reference example at precision 5', () => {
+    // Example from Google's encoded polyline documentation.
+    expect(decodePolyline('_p~iF~ps|U_ulLnnqC_mqNvxq`@', 5)).toEqual([
+      [-120.2, 38.5],
+      [-120.95, 40.7],
+      [-126.453, 43.252],
+    ]);
   });
 });
