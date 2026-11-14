@@ -25,13 +25,19 @@ export interface TrackAnalysis {
   projection: LocalProjection;
 }
 
-const STEP = 5; // metres between resampled points
-/** A bend tighter than this (degrees per metre, ~95 m radius) counts as part of a corner. */
-const TURN_RATE = 0.6;
+/**
+ * The analysis scales with the circuit: points are resampled every
+ * length/300 metres (at least 5 m), so a 15 km track with wide bends finds
+ * its corners just like a 1 km kart track.
+ */
+const MIN_STEP = 5;
+const STEPS_PER_LAP = 300;
+/** Heading change per step (degrees) above which a point is part of a bend. */
+const TURN_PER_STEP = 2.5;
 /** Minimum total heading change for a bend to count as a corner. */
 const MIN_ANGLE = 20;
-/** Bends in the same direction closer than this (metres) are one corner. */
-const MERGE_GAP = 15;
+/** Bends in the same direction this many steps apart or closer are one corner. */
+const MERGE_STEPS = 3;
 
 function resample(xy: [number, number][], step: number): [number, number][] {
   if (xy.length < 2) return xy.slice();
@@ -63,10 +69,11 @@ const wrap = (a: number) => {
 
 export function analyzeTrack(centreline: LngLat[], closed: boolean): TrackAnalysis {
   const projection = new LocalProjection(centreline[0] ?? [0, 0]);
-  const xy = resample(
-    centreline.map((c) => projection.toXY(c)),
-    STEP,
-  );
+  const raw = centreline.map((c) => projection.toXY(c));
+  let rawLength = 0;
+  for (let i = 1; i < raw.length; i++) rawLength += Math.hypot(raw[i][0] - raw[i - 1][0], raw[i][1] - raw[i - 1][1]);
+  const STEP = Math.max(MIN_STEP, rawLength / STEPS_PER_LAP);
+  const xy = resample(raw, STEP);
   const n = xy.length;
   const empty: TrackAnalysis = {
     xy,
@@ -108,7 +115,7 @@ export function analyzeTrack(centreline: LngLat[], closed: boolean): TrackAnalys
     }
     smooth[i] = s / c;
   }
-  const threshold = (TURN_RATE * STEP * Math.PI) / 180;
+  const threshold = (TURN_PER_STEP * Math.PI) / 180;
   const sign = (i: number) => (Math.abs(smooth[i]) > threshold ? Math.sign(smooth[i]) : 0);
 
   // Runs of bending in one direction. For a loop, start scanning at a straight point.
@@ -129,7 +136,7 @@ export function analyzeTrack(centreline: LngLat[], closed: boolean): TrackAnalys
     const s = sign(i);
     if (s === 0) continue;
     const last = runs[runs.length - 1];
-    if (last && last.dir === s && (p - last.to) * STEP <= MERGE_GAP) last.to = p;
+    if (last && last.dir === s && p - last.to <= MERGE_STEPS) last.to = p;
     else runs.push({ from: p, to: p, dir: s });
   }
 

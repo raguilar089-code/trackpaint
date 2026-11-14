@@ -131,7 +131,9 @@ export function drawPoster(canvas: HTMLCanvasElement, a: TrackAnalysis, info: Po
   const stats: [string, string, string][] = [
     ['LONGITUD', formatKm(a.length), 'km'],
     ['CURVAS', String(a.corners.length), a.corners.length === 1 ? 'curva' : 'curvas'],
-    ['RECTA MÁS LARGA', Math.round(a.longestStraight).toLocaleString('es-ES'), 'm'],
+    a.longestStraight >= 1000
+      ? ['RECTA MÁS LARGA', formatKm(a.longestStraight), 'km']
+      : ['RECTA MÁS LARGA', String(Math.round(a.longestStraight)), 'm'],
     a.direction
       ? ['SENTIDO', a.direction === 'horario' ? 'Horario' : 'Antihorario', '']
       : ['ANCHO DE PISTA', info.width.toLocaleString('es-ES'), 'm'],

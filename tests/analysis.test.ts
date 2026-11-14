@@ -62,3 +62,19 @@ describe('analyzeTrack', () => {
     expect(analyzeTrack([ll(0, 0), ll(10, 0)], false).length).toBeCloseTo(10, 1);
   });
 });
+
+describe('analyzeTrack at large scale', () => {
+  it('finds the four bends of a 15 km loop drawn with four points', () => {
+    const pts = [ll(0, 0), ll(3700, 0), ll(3700, 3700), ll(0, 3700)];
+    const centre = smoothTrack(pts, true).map((s) => s.coord);
+    const a = analyzeTrack(centre, true);
+    expect(a.length).toBeGreaterThan(12000);
+    expect(a.corners).toHaveLength(4);
+    expect(a.longestStraight).toBeLessThan(a.length / 2);
+  });
+
+  it('finds the corners of a 1 km street circuit', () => {
+    const a = analyzeTrack(rectangle(300, 150), true);
+    expect(a.corners).toHaveLength(4);
+  });
+});
