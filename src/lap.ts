@@ -116,8 +116,54 @@ export function carAt(p: LapProfile, t: number): { coord: LngLat; speed: number;
 }
 
 /** Lap time as m:ss.s */
-export function formatLapTime(s: number): string {
+export function formatLapTime(s: number, decimals = 1): string {
   const min = Math.floor(s / 60);
   const sec = s - min * 60;
-  return `${min}:${sec.toFixed(1).padStart(4, '0')}`;
+  return `${min}:${sec.toFixed(decimals).padStart(decimals + 3, '0')}`;
+}
+
+/** Time (s) at which the car passes a distance along the lap. */
+export function timeAtDist(p: LapProfile, d: number): number {
+  const { dist, time } = p;
+  if (d <= 0) return 0;
+  const last = dist.length - 1;
+  if (d >= dist[last]) return time[last];
+  let lo = 0;
+  let hi = last;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (dist[mid] <= d) lo = mid;
+    else hi = mid;
+  }
+  const f = (d - dist[lo]) / (dist[hi] - dist[lo] || 1);
+  return time[lo] + (time[hi] - time[lo]) * f;
+}
+
+/** Upper speed of each gear, km/h (8-speed gearbox). */
+const GEAR_TOP = [95, 135, 170, 205, 240, 270, 295, 330];
+
+export interface Telemetry {
+  gear: number;
+  /** 0..1 within the rev range of the current gear. */
+  rpm: number;
+  throttle: number;
+  brake: number;
+}
+
+/** Driver inputs and gearbox state derived from the speed profile. */
+export function telemetry(p: LapProfile, index: number, speed: number): Telemetry {
+  const kmh = speed * 3.6;
+  let gear = GEAR_TOP.findIndex((top) => kmh <= top);
+  if (gear < 0) gear = GEAR_TOP.length - 1;
+  const low = gear === 0 ? 0 : GEAR_TOP[gear - 1] * 0.82;
+  const rpm = Math.max(0, Math.min(1, (kmh - low) / (GEAR_TOP[gear] - low)));
+  const i = Math.min(index, p.speed.length - 2);
+  const ds = p.dist[i + 1] - p.dist[i] || 1;
+  const accel = (p.speed[i + 1] ** 2 - p.speed[i] ** 2) / (2 * ds);
+  let throttle = 0;
+  let brake = 0;
+  if (accel < -2) brake = Math.min(1, -accel / A_BRK + 0.25);
+  else if (accel > 1 || speed >= V_MAX - 0.5) throttle = 1;
+  else throttle = 0.55 + 0.45 * Math.max(0, accel); // holding speed through a corner
+  return { gear: gear + 1, rpm, throttle, brake };
 }

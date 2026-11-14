@@ -16,7 +16,7 @@ Diseña circuitos de carreras, urbanos o permanentes, sobre un mapa real.
 - **Elementos de pista**: pianos (rojo, azul o amarillo; automáticos en todas las curvas o a mano), muros (también automáticos a ambos lados), vallas, barreras de neumáticos, escapatorias de grava o asfalto, césped, pit lane, boxes y gradas. Se pueden seleccionar, mover, girar, cambiar de lado y borrar. Los boxes y gradas se ven en 3D.
 - **Carrera**: 3 sectores, speed trap, zonas de Straight Mode y punto de detección del Overtake Mode (los sustitutos del DRS desde 2026), a mano o automáticos.
 - **Seguridad**: puestos de comisarios numerados y grúas, a mano o automáticos.
-- **▶ Vuelta**: la cámara sigue a un coche durante una vuelta, con velocidad y tiempo de vuelta estimados según las curvas.
+- **▶ Vuelta**: la cámara sigue a un coche durante una vuelta, con un rótulo al estilo de las retransmisiones: tiempo, sectores, velocidad, marcha, revoluciones, acelerador y freno, minimapa, curva actual, Straight Mode y speed trap. La velocidad se calcula según lo cerradas que sean las curvas.
 - **Exportar póster** en PNG (2000 × 2828 px), oscuro o claro: trazado con curvas numeradas, salida/meta y sentido de giro, bandera y nombre del país, ciudad, longitud, número de curvas, recta más larga y sentido de giro.
 - Guardar circuitos en el navegador y exportarlos o importarlos como archivo `.trackpaint.json`.
 

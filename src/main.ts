@@ -20,6 +20,8 @@ import {
   type BlockElement,
   type ElementType,
   type KerbColor,
+  type MarkerElement,
+  type ZoneElement,
   type TrackElement,
   autoKerbs,
   autoRaceLayout,
@@ -29,10 +31,12 @@ import {
   locateOnTrack,
   newId,
   placeBlock,
+  sectorBounds,
 } from './elements';
 import { type Locality, flagUrl, reverseGeocode, routeSegment, searchPlaces } from './services';
 import { analyzeTrack } from './analysis';
 import { type LapProfile, carAt, formatLapTime, lapProfile } from './lap';
+import { LapHud } from './hud';
 import { type PosterTheme, drawPoster } from './poster';
 import * as storage from './storage';
 
@@ -1000,6 +1004,7 @@ interface LapRun {
   marker: maplibregl.Marker;
   restore: { center: maplibregl.LngLat; zoom: number; pitch: number; bearing: number };
   panelWasCollapsed: boolean;
+  hud: LapHud;
 }
 let lap: LapRun | null = null;
 /** Playback speed: the lap runs this many times faster than real time. */
@@ -1018,6 +1023,22 @@ function startLap() {
   }
   select(null);
   setTool('pan');
+  const closed = circuit.closed && circuit.points.length > 2;
+  const line = centre();
+  const { corners } = analyzeTrack(line, closed);
+  const bounds = sectorBounds(circuit.elements);
+  const L = profile.length;
+  const zones = circuit.elements.filter((e): e is ZoneElement => e.type === 'straightmode');
+  const trap = circuit.elements.find((e): e is MarkerElement => e.type === 'speedtrap');
+  const hud = new LapHud($('lap-hud'), {
+    profile,
+    name: circuit.name,
+    sectors: bounds.length === 2 ? [bounds[0], bounds[1]] : [L / 3, (2 * L) / 3],
+    corners,
+    straightMode: zones.map((z) => ({ from: z.from, to: z.to })),
+    speedTrap: trap ? trap.at : null,
+    closed,
+  });
   const el = document.createElement('div');
   el.className = 'car-marker';
   const marker = new maplibregl.Marker({ element: el }).setLngLat(profile.coords[0]).addTo(map);
@@ -1029,13 +1050,12 @@ function startLap() {
     marker,
     restore: { center: map.getCenter(), zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() },
     panelWasCollapsed: $('panel').classList.contains('collapsed'),
+    hud,
   };
   // Hide the panel for a clear view of the lap.
   $('panel').classList.add('collapsed');
   $('play').setAttribute('aria-pressed', 'true');
   $('play').textContent = '■ Parar';
-  $('hud-est').textContent = `/ ${formatLapTime(profile.lapTime)}`;
-  $('lap-hud').hidden = false;
   lap.frame = requestAnimationFrame(lapFrame);
 }
 
@@ -1052,11 +1072,10 @@ function lapFrame(now: number) {
   lap.marker.setLngLat(car.coord);
   // Top padding puts the car in the lower part of the screen, like a chase camera.
   map.jumpTo({ center: car.coord, bearing: lap.bearing, pitch: 68, zoom: 17.3, padding: { top: map.getContainer().clientHeight * 0.35, bottom: 0, left: 0, right: 0 } });
-  $('hud-speed').textContent = String(Math.round(car.speed * 3.6));
-  $('hud-time').textContent = formatLapTime(Math.min(t, profile.lapTime));
-  $<HTMLElement>('hud-bar').style.width = `${(100 * car.dist) / profile.length}%`;
-  if (t >= profile.lapTime) {
-    stopLap(`Vuelta completada: ${formatLapTime(profile.lapTime)} estimado (coche de carreras, ${(profile.length / 1000).toFixed(2)} km).`);
+  lap.hud.update(t);
+  // Hold the final time on screen for a moment before handing the camera back.
+  if (t >= profile.lapTime + 3 * LAP_RATE) {
+    stopLap(`Vuelta completada: ${formatLapTime(profile.lapTime, 3)} estimado (coche de carreras, ${(profile.length / 1000).toFixed(2)} km).`);
     return;
   }
   lap.frame = requestAnimationFrame(lapFrame);
@@ -1066,12 +1085,12 @@ function stopLap(message?: string) {
   if (!lap) return;
   cancelAnimationFrame(lap.frame);
   lap.marker.remove();
+  lap.hud.destroy();
   const { restore, panelWasCollapsed } = lap;
   lap = null;
   if (!panelWasCollapsed) $('panel').classList.remove('collapsed');
   $('play').setAttribute('aria-pressed', 'false');
   $('play').textContent = '▶ Vuelta';
-  $('lap-hud').hidden = true;
   map.easeTo({ ...restore, padding: { top: 0, bottom: 0, left: 0, right: 0 }, duration: 1200 });
   if (message) setStatus(message);
 }
