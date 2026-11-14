@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { type LngLat, distance, lineLength, ribbonEdges, smoothTrack } from '../src/geometry';
+import { type LngLat, distance, lineLength, ribbonEdges, simplify, smoothTrack } from '../src/geometry';
 import { History, buildCentreline, newCircuit, parseCircuit, segmentKey } from '../src/circuit';
 
 // Roughly a 200 m square near Madrid.
@@ -85,5 +85,23 @@ describe('circuit', () => {
     const undone = h.undo(b)!;
     expect(undone.name).toBe('A');
     expect(h.redo(undone)!.name).toBe('B');
+  });
+});
+
+describe('simplify', () => {
+  it('reduces a wobbly straight stroke to its ends', () => {
+    const stroke: LngLat[] = Array.from({ length: 50 }, (_, i) => [-3.7 + i * 0.0001, 40.4 + (i % 2) * 0.000005]);
+    const out = simplify(stroke, 2);
+    expect(out).toEqual([stroke[0], stroke[49]]);
+  });
+
+  it('keeps the corner of an L-shaped stroke', () => {
+    const stroke: LngLat[] = [
+      ...Array.from({ length: 20 }, (_, i): LngLat => [-3.7 + i * 0.0001, 40.4]),
+      ...Array.from({ length: 20 }, (_, i): LngLat => [-3.698, 40.4 + i * 0.0001]),
+    ];
+    const out = simplify(stroke, 2);
+    expect(out.length).toBe(3);
+    expect(out[1]).toEqual([-3.698, 40.4]);
   });
 });

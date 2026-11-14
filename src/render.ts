@@ -39,7 +39,7 @@ export const STYLES: Record<'mapa' | 'satelite', string | StyleSpecification> = 
 };
 
 const EMPTY: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
-const SOURCES = ['tp-surface', 'tp-edges', 'tp-center', 'tp-start', 'tp-points'] as const;
+const SOURCES = ['tp-surface', 'tp-edges', 'tp-center', 'tp-start', 'tp-points', 'tp-stroke'] as const;
 
 function arrowImage(): ImageData {
   const size = 32;
@@ -119,6 +119,14 @@ export function addTrackLayers(map: MLMap) {
     source: 'tp-center',
     paint: { 'line-color': '#000000', 'line-opacity': 0, 'line-width': 22 },
   });
+  // Live brush stroke while painting.
+  map.addLayer({
+    id: 'tp-stroke',
+    type: 'line',
+    source: 'tp-stroke',
+    layout: { 'line-join': 'round', 'line-cap': 'round' },
+    paint: { 'line-color': '#e11d2e', 'line-width': 6, 'line-opacity': 0.75 },
+  });
   map.addLayer({
     id: 'tp-points',
     type: 'circle',
@@ -172,4 +180,12 @@ export function renderTrack(map: MLMap, circuit: Circuit, samples: Sample[], sho
         }))
       : [],
   });
+}
+
+export function renderStroke(map: MLMap, coords: LngLat[]) {
+  setData(
+    map,
+    'tp-stroke',
+    coords.length > 1 ? { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } } : EMPTY,
+  );
 }

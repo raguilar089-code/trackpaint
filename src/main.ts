@@ -11,12 +11,12 @@ import {
   segmentKey,
   segments,
 } from './circuit';
-import type { LngLat, Sample } from './geometry';
-import { STYLES, addTrackLayers, renderTrack } from './render';
+import { type LngLat, type Sample, simplify } from './geometry';
+import { STYLES, addTrackLayers, renderStroke, renderTrack } from './render';
 import { routeSegment, searchPlaces } from './services';
 import * as storage from './storage';
 
-type Tool = 'draw' | 'edit' | 'pan';
+type Tool = 'paint' | 'draw' | 'edit' | 'pan';
 type StyleName = keyof typeof STYLES;
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -25,7 +25,7 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 
 let circuit: Circuit = storage.loadDraft() ?? newCircuit();
 let samples: Sample[] = [];
-let tool: Tool = circuit.points.length ? 'edit' : 'draw';
+let tool: Tool = circuit.points.length ? 'edit' : 'paint';
 let dragIndex: number | null = null;
 const history = new History();
 const routes = new Map<string, LngLat[]>();
@@ -102,7 +102,7 @@ function pointAt(e: MapMouseEvent | MapTouchEvent): number | null {
 }
 
 map.on('click', (e) => {
-  if (tool === 'pan') return;
+  if (tool === 'pan' || tool === 'paint') return;
   const hit = pointAt(e);
   if (hit !== null) {
     if (tool === 'draw' && hit === 0 && circuit.points.length >= 3 && !circuit.closed) {
@@ -199,9 +199,93 @@ map.on('mouseleave', 'tp-hit', () => {
   if (dragIndex === null) map.getCanvas().style.cursor = '';
 });
 
+// ---------- Painting ----------
+
+/** Screen-space points of the stroke being painted, or null when not painting. */
+let stroke: { x: number; y: number }[] | null = null;
+const SNAP_PX = 30;
+
+function eventXY(e: MapMouseEvent | MapTouchEvent) {
+  return { x: e.point.x, y: e.point.y };
+}
+
+function startPaint(e: MapMouseEvent | MapTouchEvent) {
+  if (tool !== 'paint' || dragIndex !== null) return;
+  if ('points' in e && e.points.length > 1) return; // let two-finger gestures zoom/rotate
+  if ('originalEvent' in e && e.originalEvent instanceof MouseEvent && e.originalEvent.button !== 0) return;
+  e.preventDefault(); // stops the map from panning while the brush is down
+  stroke = [eventXY(e)];
+}
+function movePaint(e: MapMouseEvent | MapTouchEvent) {
+  if (!stroke) return;
+  const p = eventXY(e);
+  const last = stroke[stroke.length - 1];
+  if (Math.hypot(p.x - last.x, p.y - last.y) < 3) return;
+  stroke.push(p);
+  renderStroke(map, stroke.map((q) => toLngLat(q)));
+}
+function endPaint() {
+  if (!stroke) return;
+  const pts = stroke;
+  stroke = null;
+  renderStroke(map, []);
+  if (pts.length < 4) return;
+  applyStroke(pts);
+}
+
+function toLngLat(p: { x: number; y: number }): LngLat {
+  const ll = map.unproject([p.x, p.y]);
+  return [ll.lng, ll.lat];
+}
+
+/**
+ * Turn a painted stroke into control points. A stroke that starts at the end
+ * of an open track continues it; one that ends back at its start closes the
+ * loop. Anything else replaces the track (undo brings it back).
+ */
+function applyStroke(pts: { x: number; y: number }[]) {
+  const first = pts[0];
+  const last = pts[pts.length - 1];
+  const near = (a: { x: number; y: number }, b: LngLat) => {
+    const q = map.project(b);
+    return Math.hypot(a.x - q.x, a.y - q.y) < SNAP_PX;
+  };
+  const n = circuit.points.length;
+  const extend = n > 0 && !circuit.closed && near(first, circuit.points[n - 1]);
+
+  // Tolerance of ~6 screen pixels, in metres at the current zoom.
+  const a = map.unproject([first.x, first.y]);
+  const b = map.unproject([first.x + 6, first.y]);
+  const tolerance = Math.max(0.5, a.distanceTo(b));
+  let coords = simplify(pts.map(toLngLat), tolerance);
+
+  const loopStart = extend ? circuit.points[0] : coords[0];
+  const closes = near(last, loopStart) && (extend ? n + coords.length : coords.length) >= 4;
+  if (closes) coords = coords.slice(0, -1); // the loop joins back to the start point
+
+  commit((c) => {
+    if (extend) c.points.push(...coords.slice(1));
+    else c.points = coords;
+    c.closed = closes && c.points.length >= 3;
+  });
+  setStatus(
+    closes ? 'Circuito cerrado. Usa Editar para afinar los puntos.' : extend ? 'Trazado ampliado.' : 'Trazado pintado.',
+  );
+}
+
+map.on('mousedown', startPaint);
+map.on('touchstart', startPaint);
+map.on('mousemove', movePaint);
+map.on('touchmove', movePaint);
+map.on('mouseup', endPaint);
+map.on('touchend', endPaint);
+map.on('touchcancel', endPaint);
+
 // ---------- Panel ----------
 
 const HINTS: Record<Tool, string> = {
+  paint:
+    'Mantén pulsado y arrastra para pintar la pista. Termina en el inicio para cerrarla, o empieza en el final para continuarla. Usa dos dedos o la rueda para moverte.',
   draw: 'Haz clic en el mapa para añadir puntos. Clic en el punto verde para cerrar el circuito.',
   edit: 'Arrastra los puntos para moverlos. Clic sobre la pista para añadir uno. Doble clic o clic derecho en un punto para borrarlo.',
   pan: 'Mueve, gira e inclina el mapa sin tocar el trazado.',
@@ -213,7 +297,7 @@ function setTool(t: Tool) {
     b.setAttribute('aria-checked', String(b.dataset.tool === t));
   });
   $('hint').textContent = HINTS[t];
-  $('map').classList.toggle('drawing', t === 'draw');
+  $('map').classList.toggle('drawing', t === 'draw' || t === 'paint');
   if (t === 'pan') map.doubleClickZoom.enable();
   else map.doubleClickZoom.disable();
   redraw();
@@ -262,7 +346,7 @@ function loadCircuit(c: Circuit) {
   circuit = c;
   history.clear();
   changed();
-  setTool(c.points.length ? 'edit' : 'draw');
+  setTool(c.points.length ? 'edit' : 'paint');
   fitToCircuit();
 }
 
@@ -358,7 +442,7 @@ $('clear').onclick = () => {
     c.points = [];
     c.closed = false;
   });
-  setTool('draw');
+  setTool('paint');
   setStatus('Trazado borrado. Puedes deshacerlo.');
 };
 $('save').onclick = () => {

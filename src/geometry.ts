@@ -192,3 +192,41 @@ export function bearing(a: LngLat, b: LngLat): number {
     Math.sin(toRad(a[1])) * Math.cos(toRad(b[1])) * Math.cos(toRad(b[0] - a[0]));
   return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
 }
+
+/**
+ * Douglas-Peucker simplification of a hand-drawn stroke. `tolerance` is in
+ * metres: points closer than that to the simplified line are dropped.
+ */
+export function simplify(coords: LngLat[], tolerance: number): LngLat[] {
+  if (coords.length < 3) return coords.slice();
+  const proj = new LocalProjection(coords[0]);
+  const xy = coords.map((c) => proj.toXY(c));
+  const keep = new Uint8Array(coords.length);
+  keep[0] = keep[coords.length - 1] = 1;
+  const stack: [number, number][] = [[0, coords.length - 1]];
+  while (stack.length) {
+    const [a, b] = stack.pop()!;
+    const [ax, ay] = xy[a];
+    const [bx, by] = xy[b];
+    const dx = bx - ax;
+    const dy = by - ay;
+    const len2 = dx * dx + dy * dy;
+    let maxD = 0;
+    let idx = -1;
+    for (let i = a + 1; i < b; i++) {
+      const [px, py] = xy[i];
+      let t = len2 > 0 ? ((px - ax) * dx + (py - ay) * dy) / len2 : 0;
+      t = Math.max(0, Math.min(1, t));
+      const d = Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+      if (d > maxD) {
+        maxD = d;
+        idx = i;
+      }
+    }
+    if (idx >= 0 && maxD > tolerance) {
+      keep[idx] = 1;
+      stack.push([a, idx], [idx, b]);
+    }
+  }
+  return coords.filter((_, i) => keep[i]);
+}

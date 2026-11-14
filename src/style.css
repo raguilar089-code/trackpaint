@@ -85,7 +85,7 @@ input[type='text'], input[type='search'] {
 .range output { color: var(--fg); font-weight: 600; margin-left: 4px; }
 .range input { width: 100%; accent-color: var(--accent); }
 
-.tools { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.tools { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
 .tools button[aria-checked='true'] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
 .hint { margin: -4px 0 0; font-size: 12px; color: var(--muted); line-height: 1.4; }
 

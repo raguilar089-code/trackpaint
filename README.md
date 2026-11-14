@@ -8,6 +8,7 @@ Diseña circuitos de carreras, urbanos o permanentes, sobre un mapa real.
 - Buscador de ciudades, calles y lugares.
 - Trazado con curvas suaves a partir de puntos, u opción de **seguir las calles**.
 - Ancho de pista real en metros, sentido de giro y línea de salida/meta.
+- **Pintar** la pista a mano alzada arrastrando sobre el mapa, o colocarla punto a punto.
 - Edición: arrastrar puntos, insertar haciendo clic sobre la pista, borrar con doble clic o clic derecho, deshacer y rehacer.
 - Longitud del circuito.
 - Guardar circuitos en el navegador y exportarlos o importarlos como archivo `.trackpaint.json`.
