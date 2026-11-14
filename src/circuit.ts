@@ -1,4 +1,5 @@
 import { type LngLat, type Sample, smoothTrack, lineLength } from './geometry';
+import { type TrackElement, parseElements } from './elements';
 
 export interface Circuit {
   version: 1;
@@ -11,6 +12,8 @@ export interface Circuit {
   width: number;
   /** Follow real streets between control points instead of a smooth curve. */
   snapToRoads: boolean;
+  /** Kerbs, walls, run-off, pits, grandstands… */
+  elements: TrackElement[];
   updatedAt: string;
 }
 
@@ -23,6 +26,7 @@ export function newCircuit(name = 'Nuevo circuito'): Circuit {
     closed: false,
     width: 12,
     snapToRoads: false,
+    elements: [],
     updatedAt: new Date().toISOString(),
   };
 }
@@ -50,6 +54,7 @@ export function parseCircuit(data: unknown): Circuit {
     closed: Boolean(d.closed),
     width: Number.isFinite(width) ? Math.min(30, Math.max(3, width)) : 12,
     snapToRoads: Boolean(d.snapToRoads),
+    elements: parseElements(d.elements),
     updatedAt: typeof d.updatedAt === 'string' ? d.updatedAt : new Date().toISOString(),
   };
 }

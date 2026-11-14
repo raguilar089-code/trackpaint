@@ -44,6 +44,41 @@
           </label>
         </div>
 
+        <section class="elements">
+          <h2>Elementos de pista</h2>
+          <div class="el-grid" role="radiogroup" aria-label="Elemento">
+            <button data-el="kerb" role="radio"><i class="sw kerb"></i>Piano</button>
+            <button data-el="wall" role="radio"><i class="sw wall"></i>Muro</button>
+            <button data-el="fence" role="radio"><i class="sw fence"></i>Valla</button>
+            <button data-el="tyres" role="radio"><i class="sw tyres"></i>Neumáticos</button>
+            <button data-el="gravel" role="radio"><i class="sw gravel"></i>Grava</button>
+            <button data-el="runoff" role="radio"><i class="sw runoff"></i>Escapatoria</button>
+            <button data-el="grass" role="radio"><i class="sw grass"></i>Césped</button>
+            <button data-el="pitlane" role="radio"><i class="sw pitlane"></i>Pit lane</button>
+            <button data-el="pits" role="radio"><i class="sw pits"></i>Boxes</button>
+            <button data-el="grandstand" role="radio"><i class="sw grandstand"></i>Grada</button>
+          </div>
+          <div id="kerb-colors" class="seg flat kerb-colors" role="group" aria-label="Color del piano" hidden>
+            <button data-kerb="red" aria-pressed="true"><i class="sw kerb"></i>Rojo</button>
+            <button data-kerb="blue"><i class="sw kerb blue"></i>Azul</button>
+            <button data-kerb="yellow"><i class="sw kerb yellow"></i>Amarillo</button>
+          </div>
+          <div class="row">
+            <button id="auto-kerbs" title="Pone pianos en el interior y a la salida de cada curva">Pianos en las curvas</button>
+            <button id="auto-walls" title="Muros a ambos lados de toda la pista, como en un circuito urbano">Muros a los lados</button>
+          </div>
+          <div id="selection" class="selection" hidden>
+            <div class="sel-head"><strong id="sel-name"></strong><button id="sel-close" class="icon-btn" aria-label="Quitar selección">✕</button></div>
+            <label id="sel-length-wrap" class="field inline"><span>Largo (m)</span><input id="sel-length" type="number" min="5" max="500" step="5" /></label>
+            <div class="row">
+              <button id="sel-rotate-left" title="Girar 15° a la izquierda">↺ 15°</button>
+              <button id="sel-rotate-right" title="Girar 15° a la derecha">↻ 15°</button>
+              <button id="sel-flip" title="Pasar el piano al otro lado de la pista">⇄ Cambiar lado</button>
+              <button id="sel-delete" class="danger" title="Borrar (Supr)">🗑 Borrar</button>
+            </div>
+          </div>
+        </section>
+
         <dl class="stats">
           <div><dt>Longitud</dt><dd id="stat-length">0 m</dd></div>
           <div><dt>Puntos</dt><dd id="stat-points">0</dd></div>

@@ -11,8 +11,15 @@ Diseña circuitos de carreras, urbanos o permanentes, sobre un mapa real.
 - **Pintar** la pista a mano alzada arrastrando sobre el mapa, o colocarla punto a punto.
 - Edición: arrastrar puntos, insertar haciendo clic sobre la pista, borrar con doble clic o clic derecho, deshacer y rehacer.
 - Longitud del circuito.
+- **Elementos de pista**: pianos (rojo, azul o amarillo; automáticos en todas las curvas o a mano), muros (también automáticos a ambos lados), vallas, barreras de neumáticos, escapatorias de grava o asfalto, césped, pit lane, boxes y gradas. Se pueden seleccionar, mover, girar, cambiar de lado y borrar. Los boxes y gradas se ven en 3D.
 - **Exportar póster** en PNG (2000 × 2828 px), oscuro o claro: trazado con curvas numeradas, salida/meta y sentido de giro, bandera y nombre del país, ciudad, longitud, número de curvas, recta más larga y sentido de giro.
 - Guardar circuitos en el navegador y exportarlos o importarlos como archivo `.trackpaint.json`.
+
+## Texturas y modelos
+
+`public/assets/unity/` contiene texturas y modelos FBX del proyecto Circuit Tycoon
+(Unity), del mismo autor. `public/assets/patterns/` tiene versiones reducidas de
+la grava, el asfalto y el césped que se usan como relleno en el mapa.
 
 ## Desarrollo
 

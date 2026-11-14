@@ -9,6 +9,10 @@ export interface Corner {
   index: number;
   /** Total heading change in degrees; positive turns left. */
   angle: number;
+  /** Where the bend starts and ends, in metres along the line (start may exceed end on a loop). */
+  from: number;
+  to: number;
+  apexDist: number;
 }
 
 export interface TrackAnalysis {
@@ -161,7 +165,16 @@ export function analyzeTrack(centreline: LngLat[], closed: boolean): TrackAnalys
     const angle = (total * 180) / Math.PI;
     if (Math.abs(angle) < MIN_ANGLE) continue;
     kept.push(r);
-    corners.push({ number: 0, index: apex, apex: projection.toLngLat(xy[apex]), angle });
+    const at = (p: number) => (((start + p) % count) + count) % count;
+    corners.push({
+      number: 0,
+      index: apex,
+      apex: projection.toLngLat(xy[apex]),
+      angle,
+      from: at(r.from - W) * STEP,
+      to: at(r.to + W) * STEP,
+      apexDist: apex * STEP,
+    });
   }
   corners.sort((a, b) => a.index - b.index);
   corners.forEach((c, k) => (c.number = k + 1));

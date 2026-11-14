@@ -1,4 +1,6 @@
 import type { TrackAnalysis } from './analysis';
+import type { LngLat } from './geometry';
+import { KERB_COLORS, type TrackElement, blockRing, offsetLine, sliceLine } from './elements';
 
 export type PosterTheme = 'oscuro' | 'claro';
 
@@ -11,6 +13,10 @@ export interface PosterInfo {
   /** Track width in metres. */
   width: number;
   theme: PosterTheme;
+  /** Track furniture to draw (kerbs, walls, pits, grandstands…). */
+  elements: TrackElement[];
+  /** Track centreline, needed to place kerbs. */
+  centre: LngLat[];
 }
 
 export const POSTER_W = 2000;
@@ -117,7 +123,7 @@ export function drawPoster(canvas: HTMLCanvasElement, a: TrackAnalysis, info: Po
 
   // ---- Track drawing area ----
   const area = { x: M, y: y + 30, w: W - 2 * M, h: 1700 };
-  if (a.xy.length >= 2) drawTrack(ctx, a, area, info.theme);
+  if (a.xy.length >= 2) drawTrack(ctx, a, area, info);
   else {
     ctx.fillStyle = t.muted;
     ctx.font = `600 48px ${FONT}`;
@@ -178,16 +184,34 @@ export function drawPoster(canvas: HTMLCanvasElement, a: TrackAnalysis, info: Po
   ctx.textAlign = 'left';
 }
 
+function elementPoints(e: TrackElement): LngLat[] {
+  switch (e.type) {
+    case 'kerb':
+      return [];
+    case 'gravel':
+    case 'runoff':
+    case 'grass':
+      return e.ring;
+    case 'pits':
+    case 'grandstand':
+      return blockRing(e);
+    default:
+      return e.coords;
+  }
+}
+
 function drawTrack(
   ctx: CanvasRenderingContext2D,
   a: TrackAnalysis,
   area: { x: number; y: number; w: number; h: number },
-  theme: PosterTheme,
+  info: PosterInfo,
 ) {
+  const theme = info.theme;
   const t = THEMES[theme];
   const pad = 130; // room for corner labels
-  const xs = a.xy.map((p) => p[0]);
-  const ys = a.xy.map((p) => p[1]);
+  const extra = info.elements.flatMap(elementPoints).map((p) => a.projection.toXY(p));
+  const xs = [...a.xy, ...extra].map((p) => p[0]);
+  const ys = [...a.xy, ...extra].map((p) => p[1]);
   const minX = Math.min(...xs);
   const maxX = Math.max(...xs);
   const minY = Math.min(...ys);
@@ -209,6 +233,33 @@ function drawTrack(
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
 
+  const L = (coords: LngLat[]) => coords.map((c) => P(a.projection.toXY(c)));
+  const trace = (pts2: [number, number][], close = false) => {
+    ctx.beginPath();
+    pts2.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+    if (close) ctx.closePath();
+  };
+  const AREA_COLORS = {
+    gravel: theme === 'oscuro' ? '#6b5f48' : '#e3d3ae',
+    runoff: theme === 'oscuro' ? '#2b2f36' : '#c9ccd1',
+    grass: theme === 'oscuro' ? '#1f3d26' : '#b9d7b4',
+  };
+  const ONTOP = theme === 'oscuro' ? '#c7cbd1' : '#6b7280';
+
+  // Areas and pit lane go under the track.
+  for (const e of info.elements) {
+    if (e.type === 'gravel' || e.type === 'runoff' || e.type === 'grass') {
+      ctx.fillStyle = AREA_COLORS[e.type];
+      trace(L(e.ring), true);
+      ctx.fill();
+    } else if (e.type === 'pitlane') {
+      ctx.strokeStyle = theme === 'oscuro' ? '#5b6170' : '#9aa1ad';
+      ctx.lineWidth = 14;
+      trace(L(e.coords));
+      ctx.stroke();
+    }
+  }
+
   ctx.save();
   ctx.shadowColor = t.shadow;
   ctx.shadowBlur = 40;
@@ -222,6 +273,62 @@ function drawTrack(
   ctx.lineWidth = 28;
   path();
   ctx.stroke();
+
+  // Kerbs: red/white (or blue, yellow) dashes just outside the track edge.
+  const edgeOffset = (22 + 4) / scale; // metres that land just outside the drawn track
+  for (const e of info.elements) {
+    if (e.type !== 'kerb') continue;
+    const path2 = sliceLine(info.centre, e.from, e.to, a.closed, 2);
+    if (path2.length < 2) continue;
+    const kp = L(offsetLine(path2, edgeOffset, e.side));
+    const [c1, c2] = KERB_COLORS[e.color];
+    ctx.lineCap = 'butt';
+    ctx.lineWidth = 9;
+    ctx.strokeStyle = c2;
+    trace(kp);
+    ctx.stroke();
+    ctx.setLineDash([12, 12]);
+    ctx.strokeStyle = c1;
+    trace(kp);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.lineCap = 'round';
+  }
+
+  // Walls, fences and tyre barriers.
+  for (const e of info.elements) {
+    if (e.type !== 'wall' && e.type !== 'fence' && e.type !== 'tyres') continue;
+    ctx.strokeStyle = e.type === 'tyres' ? (theme === 'oscuro' ? '#9aa1ad' : '#111111') : ONTOP;
+    ctx.lineWidth = e.type === 'wall' ? 6 : 5;
+    ctx.setLineDash(e.type === 'fence' ? [10, 8] : e.type === 'tyres' ? [0.1, 10] : []);
+    trace(L(e.coords));
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Pits and grandstands, labelled.
+  for (const e of info.elements) {
+    if (e.type !== 'pits' && e.type !== 'grandstand') continue;
+    const ring = L(blockRing(e));
+    ctx.fillStyle = e.type === 'grandstand' ? '#2f6fd6' : theme === 'oscuro' ? '#e9eaec' : '#4b5563';
+    trace(ring, true);
+    ctx.fill();
+    const [cx, cy] = P(a.projection.toXY(e.center));
+    const lenPx = Math.hypot(ring[1][0] - ring[0][0], ring[1][1] - ring[0][1]);
+    let ang = Math.atan2(ring[1][1] - ring[0][1], ring[1][0] - ring[0][0]);
+    if (ang > Math.PI / 2) ang -= Math.PI;
+    if (ang < -Math.PI / 2) ang += Math.PI;
+    const label = e.type === 'grandstand' ? 'GRADA' : 'BOXES';
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(ang);
+    ctx.fillStyle = e.type === 'grandstand' ? '#ffffff' : theme === 'oscuro' ? '#15171c' : '#ffffff';
+    ctx.font = `800 ${Math.max(14, Math.min(30, lenPx / 7))}px ${FONT}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    if (lenPx > 50) ctx.fillText(label, 0, 1);
+    ctx.restore();
+  }
 
   // Tangent/normal at a point index, in canvas space.
   const dirAt = (i: number) => {

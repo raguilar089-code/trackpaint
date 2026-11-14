@@ -14,13 +14,26 @@ import {
   segments,
 } from './circuit';
 import { type LngLat, type Sample, simplify } from './geometry';
-import { STYLES, addTrackLayers, renderStroke, renderTrack } from './render';
+import { STYLES, addTrackLayers, renderElements, renderStroke, renderTrack, usePattern } from './render';
+import {
+  ELEMENT_LABELS,
+  type BlockElement,
+  type ElementType,
+  type KerbColor,
+  type TrackElement,
+  autoKerbs,
+  autoWalls,
+  cumulative,
+  locateOnTrack,
+  newId,
+  placeBlock,
+} from './elements';
 import { type Locality, flagUrl, reverseGeocode, routeSegment, searchPlaces } from './services';
 import { analyzeTrack } from './analysis';
 import { type PosterTheme, drawPoster } from './poster';
 import * as storage from './storage';
 
-type Tool = 'paint' | 'draw' | 'edit' | 'pan';
+type Tool = 'paint' | 'draw' | 'edit' | 'pan' | 'element';
 type StyleName = keyof typeof STYLES;
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -31,6 +44,12 @@ let circuit: Circuit = storage.loadDraft() ?? newCircuit();
 let samples: Sample[] = [];
 let tool: Tool = circuit.points.length ? 'edit' : 'paint';
 let dragIndex: number | null = null;
+/** Element placed by the 'element' tool. */
+let elementType: ElementType = 'kerb';
+let kerbColor: KerbColor = 'red';
+let selectedId: string | null = null;
+/** Block (pits/grandstand) being dragged, with the offset from its centre to the pointer. */
+let blockDrag: { id: string; dx: number; dy: number } | null = null;
 const history = new History();
 const routes = new Map<string, LngLat[]>();
 const pendingRoutes = new Set<string>();
@@ -54,6 +73,11 @@ map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-right');
 
 map.on('style.load', () => {
   addTrackLayers(map);
+  // Textures from Circuit Tycoon, downscaled to small repeating tiles.
+  const base = import.meta.env.BASE_URL;
+  void usePattern(map, 'tp-gravel', 'tp-gravel', `${base}assets/patterns/gravel.png`);
+  void usePattern(map, 'tp-runoff', 'tp-runoff', `${base}assets/patterns/runoff.png`);
+  void usePattern(map, 'tp-grass', 'tp-grass', `${base}assets/patterns/grass.png`);
   redraw();
 });
 
@@ -61,9 +85,14 @@ map.on('style.load', () => {
 
 function redraw() {
   samples = buildCentreline(circuit, routes);
-  if (map.getSource('tp-points')) renderTrack(map, circuit, samples, tool !== 'pan');
+  if (map.getSource('tp-points')) {
+    renderTrack(map, circuit, samples, tool !== 'pan' && tool !== 'element');
+    renderElements(map, circuit.elements, centre(), circuit.closed, circuit.width, selectedId);
+  }
   updateStats();
 }
+
+const centre = () => samples.map((s) => s.coord);
 
 /** Record an undo step, apply a change, then refresh everything. */
 function commit(change: (c: Circuit) => void) {
@@ -109,8 +138,45 @@ function pointAt(e: MapMouseEvent | MapTouchEvent): number | null {
   return f ? Number(f.properties?.index) : null;
 }
 
+const ELEMENT_LAYERS = [
+  'tp-blocks',
+  'tp-kerbs',
+  'tp-walls',
+  'tp-fences',
+  'tp-tyres',
+  'tp-pitlane-surface',
+  'tp-gravel',
+  'tp-runoff',
+  'tp-grass',
+];
+function elementAt(e: MapMouseEvent | MapTouchEvent): string | null {
+  const layers = ELEMENT_LAYERS.filter((l) => map.getLayer(l));
+  const box: [maplibregl.PointLike, maplibregl.PointLike] = [
+    [e.point.x - 4, e.point.y - 4],
+    [e.point.x + 4, e.point.y + 4],
+  ];
+  const f = map.queryRenderedFeatures(box, { layers })[0];
+  return (f?.properties?.id as string | undefined) ?? null;
+}
+
+function select(id: string | null) {
+  selectedId = id;
+  redraw();
+  updateSelectionUi();
+}
+
 map.on('click', (e) => {
   if (tool === 'pan' || tool === 'paint') return;
+  if (tool === 'element') {
+    if (elementType === 'pits' || elementType === 'grandstand') {
+      const type = elementType;
+      const block = placeBlock(type, centre(), circuit.width, [e.lngLat.lng, e.lngLat.lat]);
+      commit((c) => c.elements.push(block));
+      select(block.id);
+      setStatus(`${ELEMENT_LABELS[type]} colocada. Arrástrala con Editar para moverla.`);
+    }
+    return;
+  }
   const hit = pointAt(e);
   if (hit !== null) {
     if (tool === 'draw' && hit === 0 && circuit.points.length >= 3 && !circuit.closed) {
@@ -125,12 +191,53 @@ map.on('click', (e) => {
     commit((c) => c.points.push(p));
     return;
   }
+  const el = elementAt(e);
+  if (el) {
+    select(el);
+    return;
+  }
+  if (selectedId) {
+    select(null);
+    return;
+  }
   const onTrack = map.queryRenderedFeatures(e.point, { layers: ['tp-hit'] }).length > 0;
   if (onTrack && samples.length > 1) {
     const seg = nearestSegment(p);
     commit((c) => c.points.splice(seg + 1, 0, p));
   }
 });
+
+// Drag pits and grandstands in Edit mode.
+function startBlockDrag(e: MapMouseEvent | MapTouchEvent) {
+  if (tool !== 'edit' || dragIndex !== null) return;
+  if ('points' in e && e.points.length > 1) return;
+  const f = map.queryRenderedFeatures(e.point, { layers: ['tp-blocks'] })[0];
+  const block = circuit.elements.find((x) => x.id === f?.properties?.id) as BlockElement | undefined;
+  if (!block) return;
+  e.preventDefault();
+  history.push(circuit);
+  blockDrag = { id: block.id, dx: block.center[0] - e.lngLat.lng, dy: block.center[1] - e.lngLat.lat };
+  selectedId = block.id;
+  updateSelectionUi();
+}
+function moveBlockDrag(e: MapMouseEvent | MapTouchEvent) {
+  if (!blockDrag) return;
+  const b = circuit.elements.find((x) => x.id === blockDrag!.id) as BlockElement | undefined;
+  if (!b) return;
+  b.center = [e.lngLat.lng + blockDrag.dx, e.lngLat.lat + blockDrag.dy];
+  redraw();
+}
+function endBlockDrag() {
+  if (!blockDrag) return;
+  blockDrag = null;
+  changed();
+}
+map.on('mousedown', 'tp-blocks', startBlockDrag);
+map.on('touchstart', 'tp-blocks', startBlockDrag);
+map.on('mousemove', moveBlockDrag);
+map.on('touchmove', moveBlockDrag);
+map.on('mouseup', endBlockDrag);
+map.on('touchend', endBlockDrag);
 
 function nearestSegment(p: LngLat): number {
   let best = 0;
@@ -218,7 +325,8 @@ function eventXY(e: MapMouseEvent | MapTouchEvent) {
 }
 
 function startPaint(e: MapMouseEvent | MapTouchEvent) {
-  if (tool !== 'paint' || dragIndex !== null) return;
+  const strokeElement = tool === 'element' && elementType !== 'pits' && elementType !== 'grandstand';
+  if ((tool !== 'paint' && !strokeElement) || dragIndex !== null) return;
   if ('points' in e && e.points.length > 1) return; // let two-finger gestures zoom/rotate
   if ('originalEvent' in e && e.originalEvent instanceof MouseEvent && e.originalEvent.button !== 0) return;
   e.preventDefault(); // stops the map from panning while the brush is down
@@ -238,7 +346,44 @@ function endPaint() {
   stroke = null;
   renderStroke(map, []);
   if (pts.length < 4) return;
-  applyStroke(pts);
+  if (tool === 'element') applyElementStroke(pts);
+  else applyStroke(pts);
+}
+
+/** Turn a stroke into the selected kind of element. */
+function applyElementStroke(pts: { x: number; y: number }[]) {
+  const a = map.unproject([pts[0].x, pts[0].y]);
+  const b = map.unproject([pts[0].x + 4, pts[0].y]);
+  const coords = simplify(pts.map(toLngLat), Math.max(0.3, a.distanceTo(b)));
+  const type = elementType;
+  let el: TrackElement | null = null;
+  if (type === 'kerb') {
+    const line = centre();
+    if (line.length < 2) {
+      setStatus('Dibuja primero la pista.');
+      return;
+    }
+    const total = cumulative(line).at(-1)!;
+    const start = locateOnTrack(line, coords[0]);
+    const end = locateOnTrack(line, coords[coords.length - 1]);
+    let from = start.dist;
+    let to = end.dist;
+    if (circuit.closed) {
+      // Take the shorter way round between the two ends of the stroke.
+      if ((((to - from) % total) + total) % total > total / 2) [from, to] = [to, from];
+    } else if (from > to) [from, to] = [to, from];
+    el = { id: newId(), type: 'kerb', from, to, side: start.side, color: kerbColor };
+  } else if (type === 'gravel' || type === 'runoff' || type === 'grass') {
+    if (coords.length < 3) return;
+    el = { id: newId(), type, ring: coords };
+  } else if (type === 'wall' || type === 'fence' || type === 'tyres' || type === 'pitlane') {
+    el = { id: newId(), type, coords };
+  }
+  if (!el) return;
+  const added = el;
+  commit((c) => c.elements.push(added));
+  select(added.id);
+  setStatus(`${ELEMENT_LABELS[type]} añadido.`);
 }
 
 function toLngLat(p: { x: number; y: number }): LngLat {
@@ -297,6 +442,20 @@ const HINTS: Record<Tool, string> = {
   draw: 'Haz clic en el mapa para añadir puntos. Clic en el punto verde para cerrar el circuito.',
   edit: 'Arrastra los puntos para moverlos. Clic sobre la pista para añadir uno. Doble clic o clic derecho en un punto para borrarlo.',
   pan: 'Mueve, gira e inclina el mapa sin tocar el trazado.',
+  element: '',
+};
+
+const ELEMENT_HINTS: Record<ElementType, string> = {
+  kerb: 'Arrastra a lo largo del borde de la pista. El piano va en el lado donde empiezas.',
+  wall: 'Arrastra para dibujar el muro.',
+  fence: 'Arrastra para dibujar la valla.',
+  tyres: 'Arrastra para dibujar la barrera de neumáticos.',
+  pitlane: 'Arrastra para dibujar el carril de boxes.',
+  gravel: 'Rodea la zona arrastrando; se cierra sola al soltar.',
+  runoff: 'Rodea la zona de escapatoria de asfalto; se cierra sola al soltar.',
+  grass: 'Rodea la zona de césped; se cierra sola al soltar.',
+  pits: 'Haz clic junto a la pista: los boxes se colocan en paralelo, en ese lado.',
+  grandstand: 'Haz clic junto a la pista: la grada se coloca en paralelo, mirando a la pista.',
 };
 
 function setTool(t: Tool) {
@@ -304,8 +463,12 @@ function setTool(t: Tool) {
   document.querySelectorAll<HTMLButtonElement>('[data-tool]').forEach((b) => {
     b.setAttribute('aria-checked', String(b.dataset.tool === t));
   });
-  $('hint').textContent = HINTS[t];
-  $('map').classList.toggle('drawing', t === 'draw' || t === 'paint');
+  document.querySelectorAll<HTMLButtonElement>('[data-el]').forEach((b) => {
+    b.setAttribute('aria-checked', String(t === 'element' && b.dataset.el === elementType));
+  });
+  $('kerb-colors').hidden = !(t === 'element' && elementType === 'kerb');
+  $('hint').textContent = t === 'element' ? ELEMENT_HINTS[elementType] : HINTS[t];
+  $('map').classList.toggle('drawing', t === 'draw' || t === 'paint' || t === 'element');
   if (t === 'pan') map.doubleClickZoom.enable();
   else map.doubleClickZoom.disable();
   redraw();
@@ -333,6 +496,40 @@ function updateUi() {
   $<HTMLButtonElement>('fit').disabled = circuit.points.length === 0;
   $<HTMLButtonElement>('clear').disabled = circuit.points.length === 0;
   renderSavedList();
+  updateSelectionUi();
+}
+
+function selectedElement(): TrackElement | undefined {
+  return selectedId ? circuit.elements.find((e) => e.id === selectedId) : undefined;
+}
+
+function updateSelectionUi() {
+  const el = selectedElement();
+  if (selectedId && !el) selectedId = null;
+  $('selection').hidden = !el;
+  if (!el) return;
+  $('sel-name').textContent = ELEMENT_LABELS[el.type];
+  const isBlock = el.type === 'pits' || el.type === 'grandstand';
+  $('sel-rotate-left').hidden = $('sel-rotate-right').hidden = !isBlock;
+  $('sel-length-wrap').hidden = !isBlock;
+  if (isBlock) $<HTMLInputElement>('sel-length').value = String(Math.round(el.length));
+  $('sel-flip').hidden = el.type !== 'kerb';
+}
+
+function updateSelected(change: (e: TrackElement) => void) {
+  const id = selectedId;
+  if (!id) return;
+  commit((c) => {
+    const e = c.elements.find((x) => x.id === id);
+    if (e) change(e);
+  });
+}
+
+function deleteSelected() {
+  const id = selectedId;
+  if (!id) return;
+  selectedId = null;
+  commit((c) => (c.elements = c.elements.filter((x) => x.id !== id)));
 }
 
 let statusTimer: number | undefined;
@@ -346,7 +543,7 @@ function hasUnsavedChanges(): boolean {
   if (circuit.points.length === 0) return false;
   const saved = storage.listSaved().find((s) => s.id === circuit.id);
   if (!saved) return true;
-  const key = (c: Circuit) => JSON.stringify([c.name, c.points, c.closed, c.width, c.snapToRoads]);
+  const key = (c: Circuit) => JSON.stringify([c.name, c.points, c.closed, c.width, c.snapToRoads, c.elements]);
   return key(saved) !== key(circuit);
 }
 
@@ -405,6 +602,47 @@ function renderSavedList() {
 document.querySelectorAll<HTMLButtonElement>('[data-tool]').forEach((b) => {
   b.onclick = () => setTool(b.dataset.tool as Tool);
 });
+document.querySelectorAll<HTMLButtonElement>('[data-el]').forEach((b) => {
+  b.onclick = () => {
+    elementType = b.dataset.el as ElementType;
+    setTool('element');
+  };
+});
+document.querySelectorAll<HTMLButtonElement>('[data-kerb]').forEach((b) => {
+  b.onclick = () => {
+    kerbColor = b.dataset.kerb as KerbColor;
+    document.querySelectorAll('[data-kerb]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    const el = selectedElement();
+    if (el?.type === 'kerb') updateSelected((e) => e.type === 'kerb' && (e.color = kerbColor));
+  };
+});
+$('auto-kerbs').onclick = () => {
+  const line = centre();
+  if (line.length < 2) return setStatus('Dibuja primero la pista.');
+  const analysis = analyzeTrack(line, circuit.closed);
+  const lap = cumulative(line).at(-1)!;
+  const kerbs = autoKerbs(analysis.corners, lap, circuit.closed).map((k) => ({ ...k, color: kerbColor }));
+  commit((c) => (c.elements = [...c.elements.filter((e) => e.type !== 'kerb'), ...kerbs]));
+  setStatus(`${analysis.corners.length} curvas con pianos. Puedes borrar o añadir los que quieras.`);
+};
+$('auto-walls').onclick = () => {
+  const walls = autoWalls(centre(), circuit.width, circuit.closed);
+  if (!walls.length) return setStatus('Dibuja primero la pista.');
+  commit((c) => c.elements.push(...walls));
+  setStatus('Muros añadidos a ambos lados. Selecciónalos para borrarlos si no los quieres.');
+};
+$('sel-delete').onclick = deleteSelected;
+$('sel-flip').onclick = () =>
+  updateSelected((e) => e.type === 'kerb' && (e.side = e.side === 'left' ? 'right' : 'left'));
+$('sel-rotate-left').onclick = () =>
+  updateSelected((e) => (e.type === 'pits' || e.type === 'grandstand') && (e.bearing = (e.bearing + 345) % 360));
+$('sel-rotate-right').onclick = () =>
+  updateSelected((e) => (e.type === 'pits' || e.type === 'grandstand') && (e.bearing = (e.bearing + 15) % 360));
+$<HTMLInputElement>('sel-length').onchange = (ev) => {
+  const v = Math.min(500, Math.max(5, Number((ev.target as HTMLInputElement).value) || 0));
+  updateSelected((e) => (e.type === 'pits' || e.type === 'grandstand') && (e.length = v));
+};
+$('sel-close').onclick = () => select(null);
 
 $<HTMLInputElement>('name').addEventListener('change', (e) => {
   const v = (e.target as HTMLInputElement).value.trim() || 'Circuito';
@@ -487,6 +725,11 @@ window.addEventListener('keydown', (e) => {
   } else if (mod && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) {
     e.preventDefault();
     redo();
+  } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
+    e.preventDefault();
+    deleteSelected();
+  } else if (e.key === 'Escape' && selectedId) {
+    select(null);
   } else if (e.key === 'Escape') {
     setTool('edit');
   }
@@ -514,6 +757,8 @@ function drawCurrentPoster() {
     flag: posterFlag,
     width: circuit.width,
     theme: posterTheme,
+    elements: circuit.elements,
+    centre: centre(),
   });
 }
 
