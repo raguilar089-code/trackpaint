@@ -20,7 +20,7 @@ import {
 } from './elements';
 
 import type { CityLayer } from './city';
-import { formatLapTime, lapProfile, lapStats } from './lap';
+import { type LapStats, formatLapTime, lapProfile, lapStats } from './lap';
 
 export type PosterTheme = 'oscuro' | 'claro';
 
@@ -88,6 +88,18 @@ function fitText(ctx: CanvasRenderingContext2D, text: string, maxW: number, size
     s -= 4;
   } while (s > 24);
   return s;
+}
+
+/** The lap simulation only changes with the track: keep the last result. */
+let lastSim: { key: string; stats: LapStats | null } | null = null;
+function simulate(centre: LngLat[], closed: boolean): LapStats | null {
+  const mid = centre[centre.length >> 1];
+  const key = `${closed}|${centre.length}|${centre[0]}|${mid}|${centre[centre.length - 1]}`;
+  if (lastSim?.key !== key) {
+    const profile = lapProfile(centre, closed);
+    lastSim = { key, stats: profile ? lapStats(profile) : null };
+  }
+  return lastSim.stats;
 }
 
 type Stat = [label: string, value: string, unit: string];
@@ -187,8 +199,7 @@ export function drawPoster(canvas: HTMLCanvasElement, a: TrackAnalysis, info: Po
   // ---- Stats ----
   const left = a.corners.filter((c) => c.angle > 0).length;
   const right = a.corners.length - left;
-  const profile = a.xy.length >= 2 ? lapProfile(info.centre, a.closed) : null;
-  const sim = profile ? lapStats(profile) : null;
+  const sim = a.xy.length >= 2 ? simulate(info.centre, a.closed) : null;
   const track: Stat[] = [
     ['LONGITUD', formatKm(a.length), 'km'],
     ['CURVAS', String(a.corners.length), `${right} a derecha · ${left} a izquierda`],
@@ -285,13 +296,56 @@ function drawCity(
   P: (c: LngLat) => [number, number],
   scale: number,
 ) {
+  // The city is the slow part (thousands of shapes): draw it once into its own
+  // canvas and reuse it while only the texts or the theme-independent bits change.
+  const key = `${theme}|${area.x},${area.y},${area.w},${area.h}|${P([0, 0]).join(',')}|${scale}`;
+  let layer = cityCache.get(city);
+  if (!layer || layer.key !== key) {
+    layer = { key, canvas: renderCity(city, area, theme, P, scale) };
+    cityCache.set(city, layer);
+  }
+  ctx.drawImage(layer.canvas, area.x, area.y);
+}
+
+const cityCache = new WeakMap<CityLayer, { key: string; canvas: HTMLCanvasElement }>();
+
+function renderCity(
+  city: CityLayer,
+  area: { x: number; y: number; w: number; h: number },
+  theme: PosterTheme,
+  toCanvas: (c: LngLat) => [number, number],
+  scale: number,
+): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.ceil(area.w);
+  canvas.height = Math.ceil(area.h);
+  const ctx = canvas.getContext('2d')!;
+  ctx.translate(-area.x, -area.y);
+  // Shapes entirely outside the drawing area, or smaller than a pixel, are skipped.
+  const P = toCanvas;
+  const visible = (ring: LngLat[], minSize: number) => {
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const q of ring) {
+      const [x, y] = P(q);
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+    }
+    if (x1 < area.x || x0 > area.x + area.w || y1 < area.y || y0 > area.y + area.h) return false;
+    return x1 - x0 >= minSize || y1 - y0 >= minSize;
+  };
   const c = CITY[theme];
   ctx.save();
   roundRect(ctx, area.x, area.y, area.w, area.h, 28);
   ctx.clip();
-  const rings = (polys: LngLat[][][]) => {
+  const rings = (polys: LngLat[][][], minSize = 0) => {
     ctx.beginPath();
     for (const poly of polys) {
+      if (!poly.length || !visible(poly[0], minSize)) continue;
       for (const ring of poly) {
         ring.forEach((q, i) => {
           const [x, y] = P(q);
@@ -309,7 +363,7 @@ function drawCity(
   rings(city.water);
   ctx.fill('evenodd');
   ctx.fillStyle = c.building;
-  rings(city.buildings);
+  rings(city.buildings, 1.2);
   ctx.fill('evenodd');
   // Street widths in metres, drawn to scale but never thinner than a hairline.
   const widths = { service: 4, minor: 7, medium: 11, major: 16 } as const;
@@ -320,7 +374,7 @@ function drawCity(
     ctx.lineWidth = Math.max(kind === 'service' ? 1 : 1.6, widths[kind] * scale);
     ctx.beginPath();
     for (const r of city.roads) {
-      if (r.kind !== kind) continue;
+      if (r.kind !== kind || !visible(r.coords, 0)) continue;
       r.coords.forEach((q, i) => {
         const [x, y] = P(q);
         if (i) ctx.lineTo(x, y);
@@ -345,6 +399,7 @@ function drawCity(
   edge(x, y, x, y + fade, x, y, w, fade);
   edge(x, y + h, x, y + h - fade, x, y + h - fade, w, fade);
   ctx.restore();
+  return canvas;
 }
 
 function drawTrack(

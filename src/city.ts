@@ -74,13 +74,23 @@ const tileY = (lat: number, z: number) => {
  * Download the map's vector tiles that cover `bounds` (at the most detailed
  * zoom, so every street and building is there) and read the city from them.
  */
-export async function fetchCity(map: maplibregl.Map, bounds: [LngLat, LngLat], maxTiles = 80): Promise<CityLayer | null> {
+export async function fetchCity(
+  map: maplibregl.Map,
+  bounds: [LngLat, LngLat],
+  /** Width in pixels the area is drawn at; buildings smaller than a pixel are not read. */
+  drawWidth = 1760,
+  maxTiles = 24,
+): Promise<CityLayer | null> {
   const src = await tileTemplate(map);
   if (!src) return null;
   const [[w, s], [e, n]] = bounds;
   let z = Math.min(14, src.maxzoom);
   const count = (zz: number) => (tileX(e, zz) - tileX(w, zz) + 1) * (tileY(s, zz) - tileY(n, zz) + 1);
-  while (z > 10 && count(z) > maxTiles) z--;
+  while (z > 12 && count(z) > maxTiles) z--;
+  // Size of one tile on the poster, to leave out buildings too small to see.
+  const cosLat = Math.cos((((s + n) / 2) * Math.PI) / 180);
+  const spanM = (e - w) * 111320 * cosLat;
+  const tilePx = (40075016.686 * cosLat) / 2 ** z / (spanM / drawWidth);
   const jobs: Promise<void>[] = [];
   const city: CityLayer = { roads: [], water: [], parks: [], buildings: [] };
   for (let x = tileX(w, z); x <= tileX(e, z); x++) {
@@ -95,8 +105,13 @@ export async function fetchCity(map: maplibregl.Map, bounds: [LngLat, LngLat], m
             for (const name of LAYERS) {
               const layer = tile.layers[name];
               if (!layer) continue;
+              const minUnits = (1.2 * layer.extent) / tilePx;
               for (let i = 0; i < layer.length; i++) {
                 const f = layer.feature(i);
+                if (name === 'building') {
+                  const [x1, y1, x2, y2] = f.bbox();
+                  if (Math.max(x2 - x1, y2 - y1) < minUnits) continue;
+                }
                 addFeature(city, name, f.properties, f.toGeoJSON(x, y, z).geometry);
               }
             }

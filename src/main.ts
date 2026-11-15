@@ -854,11 +854,22 @@ let posterFlagCode = '';
 /** Last reverse-geocoded place, keyed by the rounded start point. */
 let locality: { key: string; value: Locality | null } | null = null;
 
+/** Redraw the poster at most once per frame (typing in the fields fires many events). */
+let posterFrame = 0;
 function drawCurrentPoster() {
-  const analysis = analyzeTrack(
-    samples.map((s) => s.coord),
-    circuit.closed,
-  );
+  if (posterFrame) return;
+  posterFrame = requestAnimationFrame(() => {
+    posterFrame = 0;
+    drawPosterNow();
+  });
+}
+
+let posterAnalysis: { samples: Sample[]; closed: boolean; value: ReturnType<typeof analyzeTrack> } | null = null;
+function drawPosterNow() {
+  if (posterAnalysis?.samples !== samples || posterAnalysis.closed !== circuit.closed) {
+    posterAnalysis = { samples, closed: circuit.closed, value: analyzeTrack(samples.map((s) => s.coord), circuit.closed) };
+  }
+  const analysis = posterAnalysis.value;
   drawPoster(posterCanvas, analysis, {
     name: $<HTMLInputElement>('poster-name').value.trim() || circuit.name,
     city: $<HTMLInputElement>('poster-city').value.trim(),
@@ -979,6 +990,12 @@ for (const id of ['poster-name', 'poster-city', 'poster-country']) {
   $<HTMLInputElement>(id).addEventListener('input', drawCurrentPoster);
 }
 $('poster-download').onclick = () => {
+  if (posterFrame) {
+    // Make sure the file has the latest texts.
+    cancelAnimationFrame(posterFrame);
+    posterFrame = 0;
+    drawPosterNow();
+  }
   posterCanvas.toBlob((blob) => {
     if (!blob) return;
     const a = document.createElement('a');
