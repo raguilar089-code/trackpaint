@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { type LngLat, distance, lineLength, ribbonEdges, roundCorners, simplify, smoothTrack } from '../src/geometry';
+import { type LngLat, distance, lineLength, minBendRadius, ribbonEdges, roundCorners, simplify, smoothTrack } from '../src/geometry';
 import { History, buildCentreline, newCircuit, parseCircuit, segmentKey } from '../src/circuit';
 import { decodePolyline } from '../src/services';
 
@@ -137,5 +137,38 @@ describe('roundCorners', () => {
     // Far from the corner the line is unchanged.
     const farPoint = out.find((s) => distance(s.coord, l[5]) < 1);
     expect(farPoint).toBeDefined();
+  });
+});
+
+describe('limitCurvature', () => {
+  it('widens a street corner so a 20 m track does not fold on the inside', () => {
+    const l: LngLat[] = [
+      ...Array.from({ length: 51 }, (_, i): LngLat => [-3.7 + i * 0.00004, 40.4]),
+      ...Array.from({ length: 50 }, (_, i): LngLat => [-3.698, 40.4 + (i + 1) * 0.00004]),
+    ];
+    const c = { ...newCircuit(), points: [l[0], l[100]], snapToRoads: true, width: 20 };
+    const routes = new Map([[segmentKey(l[0], l[100]), l]]);
+    const line = buildCentreline(c, routes).map((s) => s.coord);
+    expect(minBendRadius(line)).toBeGreaterThan(20 / 2 + 1);
+    expect(line[0]).toEqual(l[0]);
+    expect(line[line.length - 1]).toEqual(l[100]);
+  });
+});
+
+describe('limitCurvature with a routed overshoot', () => {
+  it('removes the hook when a street route goes past a junction and comes back', () => {
+    const east = (m: number) => m / 85000; // ~metres to degrees of longitude here
+    const north = (m: number) => m / 111000;
+    const l: LngLat[] = [
+      ...Array.from({ length: 41 }, (_, i): LngLat => [-3.7 + east(i * 2.5), 40.4]),
+      // 15 m past the junction and back again
+      ...Array.from({ length: 6 }, (_, i): LngLat => [-3.7 + east(100 + (i + 1) * 2.5), 40.4]),
+      ...Array.from({ length: 6 }, (_, i): LngLat => [-3.7 + east(115 - (i + 1) * 2.5), 40.4 + north(0.5)]),
+      ...Array.from({ length: 40 }, (_, i): LngLat => [-3.7 + east(100), 40.4 + north((i + 1) * 2.5)]),
+    ];
+    const c = { ...newCircuit(), points: [l[0], l[l.length - 1]], snapToRoads: true, width: 16 };
+    const routes = new Map([[segmentKey(l[0], l[l.length - 1]), l]]);
+    const line = buildCentreline(c, routes).map((s) => s.coord);
+    expect(minBendRadius(line)).toBeGreaterThan(16 / 2 + 1);
   });
 });

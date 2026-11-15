@@ -285,3 +285,82 @@ export function roundCorners(samples: Sample[], closed: boolean, radius: number,
   if (loop) out.push({ coord: out[0].coord, seg: segs[n - 1] });
   return out;
 }
+
+/**
+ * Widen bends that are tighter than `minRadius` metres, so the edges of a
+ * track of half-width < minRadius never fold over themselves on the inside.
+ * Works on evenly spaced samples (as roundCorners returns): bends that are
+ * too tight are smoothed locally, again and again, until they are wide enough.
+ */
+export function limitCurvature(samples: Sample[], closed: boolean, minRadius: number, step = 2, maxIter = 150): Sample[] {
+  const n = samples.length;
+  const target = minRadius * 1.15; // a little margin over the measured radius
+  if (n < 5 || minRadius <= 0) return samples;
+  const proj = new LocalProjection(samples[0].coord);
+  const loop = closed && n > 4;
+  const m = loop ? n - 1 : n; // a loop repeats its first point at the end
+  let pts: XY[] = samples.slice(0, m).map((s) => proj.toXY(s.coord));
+  const k = Math.max(2, Math.round(minRadius / (2 * step))); // chord used to measure the bend
+  const w = Math.max(1, Math.round(minRadius / (3 * step))); // smoothing half-window
+  const idx = (i: number) => (loop ? ((i % m) + m) % m : Math.max(0, Math.min(m - 1, i)));
+  const radiusAt = (i: number) => {
+    const a = pts[idx(i - k)];
+    const b = pts[i];
+    const c = pts[idx(i + k)];
+    const ab = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const bc = Math.hypot(c[0] - b[0], c[1] - b[1]);
+    const ca = Math.hypot(a[0] - c[0], a[1] - c[1]);
+    const cross = Math.abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]));
+    return cross < 1e-9 ? Infinity : (ab * bc * ca) / (2 * cross);
+  };
+  for (let iter = 0; iter < maxIter; iter++) {
+    const tight = new Uint8Array(m);
+    let any = false;
+    for (let i = 0; i < m; i++) {
+      if (!loop && (i < k || i >= m - k)) continue;
+      if (radiusAt(i) < target) {
+        any = true;
+        for (let j = -2 * w; j <= 2 * w; j++) tight[idx(i + j)] = 1;
+      }
+    }
+    if (!any) break;
+    const next = pts.map((p) => [p[0], p[1]] as XY);
+    for (let i = 0; i < m; i++) {
+      if (!tight[i] || (!loop && (i === 0 || i === m - 1))) continue;
+      const ww = loop ? w : Math.min(w, i, m - 1 - i);
+      let sx = 0;
+      let sy = 0;
+      for (let j = -ww; j <= ww; j++) {
+        const q = pts[idx(i + j)];
+        sx += q[0];
+        sy += q[1];
+      }
+      next[i] = [sx / (2 * ww + 1), sy / (2 * ww + 1)];
+    }
+    pts = next;
+  }
+  const out = pts.map((p, i) => ({ coord: proj.toLngLat(p), seg: samples[i].seg }));
+  if (loop) out.push({ coord: out[0].coord, seg: samples[n - 1].seg });
+  else {
+    out[0] = samples[0];
+    out[m - 1] = samples[m - 1];
+  }
+  return out;
+}
+
+/** Smallest bend radius (m) along evenly spaced samples, measured over a chord of 2·k steps. */
+export function minBendRadius(coords: LngLat[], k = 4): number {
+  if (coords.length < 2 * k + 1) return Infinity;
+  const proj = new LocalProjection(coords[0]);
+  const p = coords.map((c) => proj.toXY(c));
+  let min = Infinity;
+  for (let i = k; i < p.length - k; i++) {
+    const [a, b, c] = [p[i - k], p[i], p[i + k]];
+    const ab = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const bc = Math.hypot(c[0] - b[0], c[1] - b[1]);
+    const ca = Math.hypot(a[0] - c[0], a[1] - c[1]);
+    const cross = Math.abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]));
+    if (cross > 1e-9) min = Math.min(min, (ab * bc * ca) / (2 * cross));
+  }
+  return min;
+}
