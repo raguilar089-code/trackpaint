@@ -24,8 +24,14 @@ describe('ribbon layout', () => {
     expect(Math.min(...wall)).toBeGreaterThan(0);
   });
 
-  it('puts the highest point at the back', () => {
-    const L = ribbonLayout(plan, [100, 100, 100, 140], box);
-    expect(L.depth[3]).toBeGreaterThan(0);
+  it('keeps the map orientation and tames flat terrain', () => {
+    const big = plan.map(([x, y]): [number, number] => [x * 10, y * 10]); // 4 km wide
+    const L = ribbonLayout(big, [5, 9, 6, 12], box);
+    // East is to the right, north is further away (higher on the page).
+    expect(L.base[1][0]).toBeGreaterThan(L.base[0][0]);
+    expect(L.base[3][1]).toBeLessThan(L.base[0][1]);
+    // 7 m of relief stays small next to a 4 km wide drawing.
+    const wall = L.top.map((t, i) => L.base[i][1] - t[1]);
+    expect(Math.max(...wall) - Math.min(...wall)).toBeLessThan(box.h * 0.1);
   });
 });

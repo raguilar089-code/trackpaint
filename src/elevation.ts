@@ -31,7 +31,7 @@ export type HeightSampler = (p: LngLat) => number;
 
 /**
  * Heights every `step` metres along the track, smoothed over ~`smooth` metres
- * (the terrain data has a few metres of noise), with the highest and lowest
+ * (the terrain data has a few metres of noise, more in built-up areas), with the highest and lowest
  * points and the total climb.
  */
 export function elevationProfile(
@@ -39,7 +39,7 @@ export function elevationProfile(
   closed: boolean,
   height: HeightSampler,
   step = 10,
-  smooth = 40,
+  smooth = 120,
 ): ElevationProfile | null {
   if (centre.length < 2) return null;
   // Resample at a fixed spacing.
