@@ -902,7 +902,7 @@ function posterBounds(): [LngLat, LngLat] {
 async function loadPosterCity() {
   const key = JSON.stringify([circuit.points, circuit.closed, circuit.snapToRoads]);
   if (posterCity?.key === key || !$<HTMLInputElement>('poster-city-bg').checked) return;
-  $('poster-status').textContent = 'Cargando las calles de alrededor…';
+  setPosterLoading('Cargando las calles de alrededor…');
   let value: CityLayer | null = null;
   try {
     value = await fetchCity(map, posterBounds());
@@ -931,6 +931,13 @@ async function loadFlag(code: string) {
   }
 }
 
+/** Hide the poster behind a spinner until everything it needs has loaded. */
+function setPosterLoading(text: string | null) {
+  $('poster-preview').classList.toggle('loading', text !== null);
+  if (text) $('poster-loading-text').textContent = text;
+  $<HTMLButtonElement>('poster-download').disabled = text !== null;
+}
+
 async function openPoster() {
   if (samples.length < 2) {
     setStatus('Dibuja primero un trazado.');
@@ -938,13 +945,23 @@ async function openPoster() {
   }
   $<HTMLInputElement>('poster-name').value = circuit.name;
   setPosterTheme(posterTheme);
+  setPosterLoading('Preparando el póster…');
+  drawPosterNow(); // hidden for now, but gives the preview its final size
   posterDialog.showModal();
-  drawCurrentPoster();
+  try {
+    await preparePoster();
+  } finally {
+    drawPosterNow();
+    setPosterLoading(null);
+  }
+}
+
+async function preparePoster() {
 
   const start = circuit.points[0];
   const key = `${start[0].toFixed(3)},${start[1].toFixed(3)}`;
   if (locality?.key !== key) {
-    $('poster-status').textContent = 'Buscando ciudad y país…';
+    setPosterLoading('Buscando ciudad y país…');
     let value: Locality | null = null;
     try {
       value = await reverseGeocode(start);
@@ -957,15 +974,17 @@ async function openPoster() {
     $('poster-status').textContent = value ? '' : 'No se pudo detectar el lugar. Puedes escribirlo a mano.';
   }
   await loadFlag(locality.value?.countryCode ?? '');
-  drawCurrentPoster();
   await loadPosterCity();
-  drawCurrentPoster();
 }
 
 $<HTMLInputElement>('poster-city-bg').onchange = async () => {
-  drawCurrentPoster();
-  await loadPosterCity();
-  drawCurrentPoster();
+  setPosterLoading('Cargando las calles de alrededor…');
+  try {
+    await loadPosterCity();
+  } finally {
+    drawPosterNow();
+    setPosterLoading(null);
+  }
 };
 
 function setPosterTheme(theme: PosterTheme) {
@@ -1177,11 +1196,24 @@ map.on('dragstart', () => stopLap());
 
 // ---------- Start ----------
 
+/** Cover the page until the map and the circuit (with its street routes) are drawn. */
+async function hideLoadingWhenReady() {
+  const mapReady = new Promise<void>((resolve) => {
+    if (map.loaded()) resolve();
+    else map.once('idle', () => resolve());
+  });
+  const routesReady = circuit.snapToRoads ? fetchMissingRoutes().catch(() => undefined) : Promise.resolve();
+  const timeout = new Promise<void>((resolve) => setTimeout(resolve, 15000)); // never block for too long
+  await Promise.race([Promise.all([mapReady, routesReady]), timeout]);
+  $('app-loading').classList.add('done');
+  setTimeout(() => $('app-loading').remove(), 600);
+}
+
 document.querySelector('[data-style="mapa"]')?.setAttribute('aria-pressed', 'true');
 setView('2d', false);
 setTool(tool);
 updateUi();
-if (circuit.snapToRoads) void fetchMissingRoutes();
+void hideLoadingWhenReady();
 
 // Exposed for automated checks and debugging in the browser console.
 Object.assign(window, { trackpaint: { map, get circuit() { return circuit; }, loadCircuit, get lap() { return lap; }, get centre() { return centre(); } } });

@@ -9,6 +9,7 @@
   </head>
   <body>
     <div id="map"></div>
+    <div id="app-loading" class="app-loading" role="status"><i class="spinner"></i><span>Cargando el mapa y el circuito…</span></div>
 
     <aside id="panel" class="panel">
       <header class="panel-head">
@@ -144,7 +145,7 @@
         <button id="poster-close" class="icon-btn" aria-label="Cerrar">✕</button>
       </div>
       <div class="poster-body">
-        <div class="poster-preview"><canvas id="poster-canvas"></canvas></div>
+        <div id="poster-preview" class="poster-preview"><canvas id="poster-canvas"></canvas><div class="loading-box"><i class="spinner"></i><span id="poster-loading-text">Preparando el póster…</span></div></div>
         <div class="poster-side">
           <label class="field"><span>Nombre</span><input id="poster-name" type="text" maxlength="80" /></label>
           <label class="field"><span>Ciudad</span><input id="poster-city" type="text" maxlength="80" /></label>
