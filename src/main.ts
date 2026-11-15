@@ -823,6 +823,31 @@ $<HTMLInputElement>('import-json').onchange = async (e) => {
 };
 $('panel-toggle').onclick = () => $('panel').classList.toggle('collapsed');
 
+// Panel tabs, remembering the last one used.
+function setTab(name: string) {
+  document.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach((b) => {
+    b.setAttribute('aria-selected', String(b.dataset.tab === name));
+  });
+  document.querySelectorAll<HTMLElement>('[data-pane]').forEach((p) => (p.hidden = p.dataset.pane !== name));
+  try {
+    localStorage.setItem('trackpaint:tab', name);
+  } catch {
+    /* storage unavailable */
+  }
+}
+document.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach((b) => {
+  b.onclick = () => setTab(b.dataset.tab!);
+});
+{
+  let saved: string | null = null;
+  try {
+    saved = localStorage.getItem('trackpaint:tab');
+  } catch {
+    saved = null;
+  }
+  setTab(saved && document.querySelector(`[data-pane="${saved}"]`) ? saved : 'trazado');
+}
+
 window.addEventListener('keydown', (e) => {
   if ((e.target as HTMLElement).closest('input')) return;
   const mod = e.ctrlKey || e.metaKey;

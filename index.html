@@ -14,39 +14,70 @@
     <aside id="panel" class="panel">
       <header class="panel-head">
         <h1>Track<span>Paint</span></h1>
-        <button id="panel-toggle" class="icon-btn" aria-label="Mostrar u ocultar panel" title="Mostrar u ocultar panel">☰</button>
+        <div class="head-actions">
+          <button id="undo" class="icon-btn" title="Deshacer (Ctrl+Z)" aria-label="Deshacer">↶</button>
+          <button id="redo" class="icon-btn" title="Rehacer (Ctrl+Y)" aria-label="Rehacer">↷</button>
+          <button id="fit" class="icon-btn" title="Encuadrar el circuito" aria-label="Encuadrar el circuito">⤢</button>
+          <button id="panel-toggle" class="icon-btn" aria-label="Mostrar u ocultar panel" title="Mostrar u ocultar panel">☰</button>
+        </div>
       </header>
 
+      <div class="panel-top">
+        <input id="name" class="name-input" type="text" maxlength="80" aria-label="Nombre del circuito" placeholder="Nombre del circuito" />
+        <dl class="stats">
+          <div><dt>Longitud</dt><dd id="stat-length">0 m</dd></div>
+          <div><dt>Puntos</dt><dd id="stat-points">0</dd></div>
+        </dl>
+      </div>
+
+      <nav class="tabs" role="tablist" aria-label="Secciones">
+        <button data-tab="trazado" role="tab"><i>✏️</i><span>Trazado</span></button>
+        <button data-tab="pista" role="tab"><i>🧱</i><span>Pista</span></button>
+        <button data-tab="carrera" role="tab"><i>🏁</i><span>Carrera</span></button>
+        <button data-tab="circuitos" role="tab"><i>📁</i><span>Circuitos</span></button>
+      </nav>
+
       <div class="panel-body">
-        <form id="search" class="search" autocomplete="off">
-          <input id="search-input" type="search" placeholder="Buscar ciudad, calle o lugar…" aria-label="Buscar lugar" />
-          <ul id="search-results" class="search-results" hidden></ul>
-        </form>
-
-        <label class="field">
-          <span>Nombre del circuito</span>
-          <input id="name" type="text" maxlength="80" />
-        </label>
-
-        <div class="tools" role="radiogroup" aria-label="Herramienta">
-          <button data-tool="paint" role="radio" title="Arrastra sobre el mapa para pintar la pista">🖌️ Pintar</button>
-          <button data-tool="draw" role="radio" title="Haz clic en el mapa para añadir puntos al final">✏️ Puntos</button>
-          <button data-tool="edit" role="radio" title="Arrastra puntos o haz clic en la pista para insertar">✋ Editar</button>
-          <button data-tool="pan" role="radio" title="Solo mover el mapa">🧭 Mover</button>
-        </div>
-        <p id="hint" class="hint"></p>
-
-        <div class="options">
-          <label class="check"><input id="closed" type="checkbox" /> Circuito cerrado</label>
-          <label class="check"><input id="snap" type="checkbox" /> Seguir las calles</label>
-          <label class="field range">
-            <span>Ancho de pista <output id="width-out"></output></span>
-            <input id="width" type="range" min="4" max="20" step="0.5" />
-          </label>
+        <div id="selection" class="selection" hidden>
+          <div class="sel-head"><strong id="sel-name"></strong><button id="sel-close" class="icon-btn" aria-label="Quitar selección">✕</button></div>
+          <label id="sel-length-wrap" class="field inline"><span>Largo (m)</span><input id="sel-length" type="number" min="5" max="500" step="5" /></label>
+          <div class="row">
+            <button id="sel-rotate-left" title="Girar 15° a la izquierda">↺ 15°</button>
+            <button id="sel-rotate-right" title="Girar 15° a la derecha">↻ 15°</button>
+            <button id="sel-flip" title="Pasar al otro lado de la pista">⇄ Lado</button>
+            <button id="sel-delete" class="danger" title="Borrar (Supr)">🗑 Borrar</button>
+          </div>
         </div>
 
-        <section class="elements">
+        <section class="pane" data-pane="trazado" role="tabpanel">
+          <form id="search" class="search" autocomplete="off">
+            <input id="search-input" type="search" placeholder="🔍  Buscar ciudad, calle o lugar…" aria-label="Buscar lugar" />
+            <ul id="search-results" class="search-results" hidden></ul>
+          </form>
+
+          <h2>Herramienta</h2>
+          <div class="tools" role="radiogroup" aria-label="Herramienta">
+            <button data-tool="paint" role="radio" title="Arrastra sobre el mapa para pintar la pista"><i>🖌️</i>Pintar</button>
+            <button data-tool="draw" role="radio" title="Haz clic en el mapa para añadir puntos al final"><i>📍</i>Puntos</button>
+            <button data-tool="edit" role="radio" title="Arrastra puntos o haz clic en la pista para insertar"><i>✋</i>Editar</button>
+            <button data-tool="pan" role="radio" title="Solo mover el mapa"><i>🧭</i>Mover</button>
+          </div>
+          <p id="hint" class="hint"></p>
+
+          <h2>Trazado</h2>
+          <div class="card options">
+            <label class="switch"><span>Circuito cerrado</span><input id="closed" type="checkbox" /><i></i></label>
+            <label class="switch"><span>Seguir las calles</span><input id="snap" type="checkbox" /><i></i></label>
+            <label class="field range">
+              <span>Ancho de pista <output id="width-out"></output></span>
+              <input id="width" type="range" min="4" max="20" step="0.5" />
+            </label>
+          </div>
+        </section>
+
+        <section class="pane elements" data-pane="pista" role="tabpanel" hidden>
           <h2>Elementos de pista</h2>
+          <p class="hint">Elige uno y dibújalo o haz clic junto a la pista.</p>
           <div class="el-grid" role="radiogroup" aria-label="Elemento">
             <button data-el="kerb" role="radio"><i class="sw kerb"></i>Piano</button>
             <button data-el="wall" role="radio"><i class="sw wall"></i>Muro</button>
@@ -64,63 +95,54 @@
             <button data-kerb="blue"><i class="sw kerb blue"></i>Azul</button>
             <button data-kerb="yellow"><i class="sw kerb yellow"></i>Amarillo</button>
           </div>
-          <div class="row">
-            <button id="auto-kerbs" title="Pone pianos en el interior y a la salida de cada curva">Pianos en las curvas</button>
-            <button id="auto-walls" title="Muros a ambos lados de toda la pista, como en un circuito urbano">Muros a los lados</button>
+          <h2>Automático</h2>
+          <div class="auto-list">
+            <button id="auto-kerbs" title="Pone pianos en el interior y a la salida de cada curva"><i>✨</i>Pianos en todas las curvas</button>
+            <button id="auto-walls" title="Muros a ambos lados de toda la pista, como en un circuito urbano"><i>✨</i>Muros a ambos lados</button>
           </div>
-          <h2 class="sub">Carrera</h2>
+        </section>
+
+        <section class="pane elements" data-pane="carrera" role="tabpanel" hidden>
+          <h2>Carrera</h2>
           <div class="el-grid" role="radiogroup" aria-label="Elemento de carrera">
             <button data-el="sector" role="radio"><i class="sw sector"></i>Sectores</button>
             <button data-el="speedtrap" role="radio"><i class="sw speedtrap"></i>Speed trap</button>
             <button data-el="straightmode" role="radio" title="Zonas de aerodinámica activa que sustituyen al DRS desde 2026"><i class="sw straightmode"></i>Straight Mode</button>
-            <button data-el="overtake" role="radio" title="Punto de detección del Overtake Mode"><i class="sw overtake"></i>Overtake Mode</button>
+            <button data-el="overtake" role="radio" title="Punto de detección del Overtake Mode"><i class="sw overtake"></i>Overtake</button>
           </div>
-          <button id="auto-race" title="3 sectores iguales, zonas de Straight Mode en las rectas largas, speed trap y detección de Overtake Mode">Sectores, speed trap y Straight Mode automáticos</button>
-          <h2 class="sub">Seguridad</h2>
+          <div class="auto-list">
+            <button id="auto-race" title="3 sectores iguales, zonas de Straight Mode en las rectas largas, speed trap y detección de Overtake Mode"><i>✨</i>Sectores, speed trap y Straight Mode</button>
+          </div>
+          <h2>Seguridad</h2>
           <div class="el-grid" role="radiogroup" aria-label="Elemento de seguridad">
             <button data-el="marshal" role="radio"><i class="sw marshal"></i>Comisarios</button>
             <button data-el="crane" role="radio"><i class="sw crane"></i>Grúa</button>
           </div>
-          <button id="auto-marshals" title="Un puesto en el exterior de cada curva y más en las rectas (cada 250 m como máximo), y una grúa en cada curva">Comisarios y grúas automáticos</button>
-          <div id="selection" class="selection" hidden>
-            <div class="sel-head"><strong id="sel-name"></strong><button id="sel-close" class="icon-btn" aria-label="Quitar selección">✕</button></div>
-            <label id="sel-length-wrap" class="field inline"><span>Largo (m)</span><input id="sel-length" type="number" min="5" max="500" step="5" /></label>
-            <div class="row">
-              <button id="sel-rotate-left" title="Girar 15° a la izquierda">↺ 15°</button>
-              <button id="sel-rotate-right" title="Girar 15° a la derecha">↻ 15°</button>
-              <button id="sel-flip" title="Pasar al otro lado de la pista">⇄ Cambiar lado</button>
-              <button id="sel-delete" class="danger" title="Borrar (Supr)">🗑 Borrar</button>
-            </div>
+          <div class="auto-list">
+            <button id="auto-marshals" title="Un puesto en el exterior de cada curva y más en las rectas (cada 250 m como máximo), y una grúa en cada curva"><i>✨</i>Comisarios y grúas</button>
           </div>
         </section>
 
-        <dl class="stats">
-          <div><dt>Longitud</dt><dd id="stat-length">0 m</dd></div>
-          <div><dt>Puntos</dt><dd id="stat-points">0</dd></div>
-        </dl>
-        <p id="status" class="status" role="status"></p>
-
-        <div class="row">
-          <button id="undo" title="Deshacer (Ctrl+Z)">↶ Deshacer</button>
-          <button id="redo" title="Rehacer (Ctrl+Y)">↷ Rehacer</button>
-          <button id="fit" title="Encuadrar el circuito">⤢ Encuadrar</button>
-        </div>
-        <button id="poster" class="poster-btn">🖼️ Exportar póster</button>
-        <div class="row">
-          <button id="save" class="primary">💾 Guardar</button>
-          <button id="new">＋ Nuevo</button>
-          <button id="clear" class="danger" title="Borra el trazado y todos los elementos (se puede deshacer)">Borrar todo</button>
-        </div>
-
-        <section class="saved">
+        <section class="pane saved" data-pane="circuitos" role="tabpanel" hidden>
+          <div class="row">
+            <button id="save" class="primary">💾 Guardar</button>
+            <button id="new">＋ Nuevo</button>
+          </div>
           <h2>Mis circuitos</h2>
           <ul id="saved-list"></ul>
+          <h2>Archivo</h2>
           <div class="row">
-            <button id="export-json">⬇ Exportar archivo</button>
-            <label class="button">⬆ Importar archivo<input id="import-json" type="file" accept=".json,application/json" hidden /></label>
+            <button id="export-json">⬇ Exportar</button>
+            <label class="button">⬆ Importar<input id="import-json" type="file" accept=".json,application/json" hidden /></label>
           </div>
+          <button id="clear" class="danger ghost" title="Borra el trazado y todos los elementos (se puede deshacer)">🗑 Borrar todo el circuito</button>
         </section>
       </div>
+
+      <footer class="panel-foot">
+        <p id="status" class="status" role="status"></p>
+        <button id="poster" class="primary poster-btn">🖼️ Exportar póster</button>
+      </footer>
     </aside>
 
     <div class="view-switch">
