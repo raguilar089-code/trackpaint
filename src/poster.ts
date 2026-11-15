@@ -21,9 +21,12 @@ import {
 
 import type { CityLayer } from './city';
 import type { ElevationPoint, ElevationProfile } from './elevation';
+import { drawRibbon } from './ribbon';
 import { type LapStats, formatLapTime, lapProfile, lapStats } from './lap';
 
 export type PosterTheme = 'oscuro' | 'claro';
+/** Track drawn flat (map) or in relief (ribbon whose height follows the terrain). */
+export type PosterView = 'plano' | 'relieve';
 
 export interface PosterInfo {
   name: string;
@@ -42,6 +45,7 @@ export interface PosterInfo {
   streets?: CityLayer | null;
   /** Terrain height along the track: highest/lowest points and profile. */
   elevation?: ElevationProfile | null;
+  view?: PosterView;
 }
 
 export const POSTER_W = 2000;
@@ -191,7 +195,17 @@ export function drawPoster(canvas: HTMLCanvasElement, a: TrackAnalysis, info: Po
   // ---- Track drawing area ----
   const elev = a.xy.length >= 2 ? (info.elevation ?? null) : null;
   const area = { x: M, y: y + 30, w: W - 2 * M, h: elev ? 1380 : 1600 };
-  if (a.xy.length >= 2) drawTrack(ctx, a, area, info);
+  if (a.xy.length >= 2 && info.view === 'relieve' && elev) {
+    drawRibbon(ctx, a, elev, area, {
+      fg: t.fg,
+      bg: t.bg,
+      panel: t.panel,
+      muted: t.muted,
+      accent: ACCENT,
+      font: FONT,
+      dark: info.theme === 'oscuro',
+    });
+  } else if (a.xy.length >= 2) drawTrack(ctx, a, area, info);
   else {
     ctx.fillStyle = t.muted;
     ctx.font = `600 48px ${FONT}`;
