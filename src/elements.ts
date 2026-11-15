@@ -21,6 +21,17 @@ export interface LineElement {
   id: string;
   type: 'wall' | 'fence' | 'tyres' | 'pitlane';
   coords: LngLat[];
+  /**
+   * Barrier that follows the track edge: `coords` are rebuilt from the
+   * centreline between two distances, `gap` metres outside the edge.
+   */
+  attach?: EdgeAttach;
+}
+export interface EdgeAttach {
+  from: number;
+  to: number;
+  side: Side;
+  gap: number;
 }
 /** Free-drawn area. */
 export interface AreaElement {
@@ -147,7 +158,17 @@ export function parseElements(data: unknown): TrackElement[] {
       case 'tyres':
       case 'pitlane':
         if (Array.isArray(e.coords) && e.coords.length >= 2 && e.coords.every(isLngLat)) {
-          out.push({ id, type: e.type, coords: e.coords.map(toLngLat) });
+          const line: LineElement = { id, type: e.type, coords: e.coords.map(toLngLat) };
+          const a = e.attach as Record<string, unknown> | undefined;
+          if (a && e.type !== 'pitlane') {
+            const from = Number(a.from);
+            const to = Number(a.to);
+            const gap = Number(a.gap);
+            if ([from, to, gap].every(Number.isFinite)) {
+              line.attach = { from, to, side: a.side === 'left' ? 'left' : 'right', gap: Math.max(0, gap) };
+            }
+          }
+          out.push(line);
         }
         break;
       case 'gravel':
@@ -373,12 +394,117 @@ export function autoKerbs(corners: Corner[], lapLength: number, closed: boolean)
 /** Walls along both sides of the whole track, a little outside the edge. */
 export function autoWalls(centre: LngLat[], trackWidth: number, closed: boolean): LineElement[] {
   if (centre.length < 2) return [];
-  const gap = trackWidth / 2 + 2;
+  const total = cumulative(centre).at(-1)!;
   return (['left', 'right'] as Side[]).map((side) => {
-    const coords = offsetLine(centre, gap, side);
-    if (closed) coords[coords.length - 1] = coords[0];
-    return { id: newId(), type: 'wall' as const, coords };
+    const attach: EdgeAttach = { from: 0, to: total, side, gap: EDGE_GAP.wall };
+    return { id: newId(), type: 'wall' as const, attach, coords: edgeLine(attach, centre, closed, trackWidth) };
   });
+}
+
+/** Default distance from the track edge to a barrier that follows it (metres). */
+export const EDGE_GAP: Record<'wall' | 'fence' | 'tyres', number> = { wall: 2, fence: 2.5, tyres: 3 };
+/** A stroke drawn within this distance of the edge snaps onto it. */
+const EDGE_SNAP = 10;
+/** A stroke further out than the snap, but within this, runs parallel at its distance. */
+const EDGE_FOLLOW = 40;
+
+/**
+ * Turn a barrier stroke drawn near the track into one that follows the edge:
+ * it spans the same stretch of track, on the side it was drawn, right beside
+ * the edge (or parallel at the drawn distance if it was drawn further out).
+ * Returns null for strokes far from the track, which stay as drawn.
+ */
+export function attachToEdge(
+  type: 'wall' | 'fence' | 'tyres',
+  coords: LngLat[],
+  centre: LngLat[],
+  closed: boolean,
+  trackWidth: number,
+): EdgeAttach | null {
+  if (centre.length < 2 || coords.length < 2) return null;
+  const total = cumulative(centre).at(-1)!;
+  const hits = coords.map((p) => locateOnTrack(centre, p));
+  const offsets = hits.map((h) => h.offset - trackWidth / 2).sort((a, b) => a - b);
+  const median = offsets[Math.floor(offsets.length / 2)];
+  if (median > EDGE_FOLLOW) return null;
+  // Side most of the stroke is on.
+  const left = hits.filter((h) => h.side === 'left').length;
+  const side: Side = left * 2 >= hits.length ? 'left' : 'right';
+  let from = hits[0].dist;
+  let to = hits[hits.length - 1].dist;
+  if (closed) {
+    if ((((to - from) % total) + total) % total > total / 2) [from, to] = [to, from];
+  } else if (from > to) [from, to] = [to, from];
+  const span = closed ? (((to - from) % total) + total) % total : to - from;
+  if (span < 2) return null;
+  const gap = median <= EDGE_SNAP ? EDGE_GAP[type] : Math.round(median);
+  return { from, to, side, gap };
+}
+
+/** Coordinates of a barrier that follows the track edge. */
+export function edgeLine(a: EdgeAttach, centre: LngLat[], closed: boolean, trackWidth: number): LngLat[] {
+  const total = centre.length > 1 ? cumulative(centre).at(-1)! : 0;
+  const whole = closed && a.to - a.from >= total - 0.5;
+  const path = whole ? centre : sliceLine(centre, a.from, a.to, closed, 2);
+  if (path.length < 2) return [];
+  const line = removeLoops(offsetLine(path, trackWidth / 2 + a.gap, a.side));
+  if (whole) line[line.length - 1] = line[0];
+  return line;
+}
+
+/**
+ * Cut out the small loops an offset line makes on the inside of a bend that
+ * is tighter than the offset, so a barrier there runs straight across.
+ */
+export function removeLoops(coords: LngLat[], window = 80): LngLat[] {
+  if (coords.length < 4) return coords;
+  const proj = new LocalProjection(coords[0]);
+  const xy = coords.map((c) => proj.toXY(c));
+  const out: [number, number][] = [xy[0]];
+  let i = 0;
+  while (i < xy.length - 1) {
+    const a = out[out.length - 1];
+    const b = xy[i + 1];
+    let cut = -1;
+    let hit: [number, number] | null = null;
+    // Find the furthest later segment (within the window) that crosses a→b.
+    for (let j = Math.min(xy.length - 2, i + window); j >= i + 2; j--) {
+      const p = segmentHit(a, b, xy[j], xy[j + 1]);
+      if (p) {
+        cut = j;
+        hit = p;
+        break;
+      }
+    }
+    if (hit) {
+      // Skip the loop: continue from the crossing along segment cut → cut+1.
+      out.push(hit);
+      out.push(xy[cut + 1]);
+      i = cut + 1;
+    } else {
+      out.push(b);
+      i++;
+    }
+  }
+  return out.map((p) => proj.toLngLat(p));
+}
+
+function segmentHit(
+  a: [number, number],
+  b: [number, number],
+  c: [number, number],
+  d: [number, number],
+): [number, number] | null {
+  const rx = b[0] - a[0];
+  const ry = b[1] - a[1];
+  const sx = d[0] - c[0];
+  const sy = d[1] - c[1];
+  const den = rx * sy - ry * sx;
+  if (Math.abs(den) < 1e-12) return null;
+  const t = ((c[0] - a[0]) * sy - (c[1] - a[1]) * sx) / den;
+  const u = ((c[0] - a[0]) * ry - (c[1] - a[1]) * rx) / den;
+  if (t <= 1e-9 || t >= 1 || u < 0 || u > 1) return null;
+  return [a[0] + rx * t, a[1] + ry * t];
 }
 
 /** Distances along the lap where sectors 2 and 3 start (sector 1 starts at the line). */
