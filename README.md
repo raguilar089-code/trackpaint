@@ -18,7 +18,7 @@ Diseña circuitos de carreras, urbanos o permanentes, sobre un mapa real.
 - **Carrera**: 3 sectores, speed trap, zonas de Straight Mode y punto de detección del Overtake Mode (los sustitutos del DRS desde 2026), a mano o automáticos.
 - **Seguridad**: puestos de comisarios numerados y grúas, a mano o automáticos.
 - **▶ Vuelta**: la cámara sigue a un coche durante una vuelta, con un rótulo al estilo de las retransmisiones: tiempo, sectores, velocidad, marcha, revoluciones, acelerador y freno, minimapa, curva actual, Straight Mode y speed trap. La velocidad se calcula según lo cerradas que sean las curvas.
-- **Exportar póster** en PNG (2000 × 2828 px), oscuro o claro, con las calles, manzanas, parques y agua de la ciudad de fondo: trazado con curvas numeradas, salida/meta y sentido de giro, bandera y nombre del país, ciudad, longitud, número de curvas, recta más larga y sentido de giro.
+- **Exportar póster** en PNG (2000 × 2828 px), oscuro o claro, con curvas a derecha e izquierda, una simulación con un F1 de 2026 (tiempo de vuelta, velocidad punta y media, % a fondo) y las calles, manzanas, parques y agua de la ciudad de fondo: trazado con curvas numeradas, salida/meta y sentido de giro, bandera y nombre del país, ciudad, longitud, número de curvas, recta más larga y sentido de giro.
 - Guardar circuitos en el navegador y exportarlos o importarlos como archivo `.trackpaint.json`.
 
 ## Texturas y modelos

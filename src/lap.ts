@@ -1,12 +1,28 @@
 import { type LngLat, LocalProjection, distance } from './geometry';
 
-/** Simple vehicle model for the lap animation and the estimated lap time. */
-const V_MAX = 86; // m/s, about 310 km/h
+/**
+ * Point-mass model of a current (2026-rules) Formula 1 car, used for the lap
+ * animation, the estimated lap time and the top speed on the poster.
+ * Downforce grows with the square of speed, so grip, braking and the speed a
+ * corner can be taken at all rise with speed; acceleration fades towards the
+ * top speed as drag catches up with the power.
+ */
+const V_MAX = 95; // m/s, ~340 km/h with Straight Mode open
 const V_MIN = 14; // m/s
-const A_LAT = 35; // lateral grip, m/s² (~3.5 g)
-const A_ACC = 11; // traction-limited acceleration, m/s²
-const A_BRK = 40; // braking, m/s²
+const LAT_BASE = 20; // m/s² of mechanical grip (~2 g)
+const LAT_AERO = 0.0045; // extra lateral grip per (m/s)², from downforce
+const ACC_BASE = 14; // m/s², traction-limited launch (~1.4 g)
+const BRK_BASE = 25; // m/s² at low speed
+const BRK_AERO = 0.004; // extra braking per (m/s)², ~5.5 g from top speed
 const STEP = 5; // metres between profile points
+
+/** Fastest speed through a bend of radius r (m). */
+export function cornerSpeed(r: number): number {
+  if (!Number.isFinite(r) || LAT_AERO * r >= 1) return V_MAX;
+  return Math.max(V_MIN, Math.min(V_MAX, Math.sqrt((LAT_BASE * r) / (1 - LAT_AERO * r))));
+}
+const accelAt = (v: number) => Math.max(0.6, ACC_BASE * (1 - (v / (V_MAX + 2)) ** 2));
+const brakeAt = (v: number) => BRK_BASE + BRK_AERO * v * v;
 
 export interface LapProfile {
   coords: LngLat[];
@@ -67,17 +83,14 @@ export function lapProfile(centre: LngLat[], closed: boolean): LapProfile | null
   const at = (i: number) => (loop ? xy[((i % m) + m) % m] : xy[Math.max(0, Math.min(n - 1, i))]);
 
   const vmax: number[] = [];
-  for (let i = 0; i < n; i++) {
-    const r = radius(at(i - k), at(i), at(i + k));
-    vmax.push(Math.max(V_MIN, Math.min(V_MAX, Math.sqrt(A_LAT * r))));
-  }
+  for (let i = 0; i < n; i++) vmax.push(cornerSpeed(radius(at(i - k), at(i), at(i + k))));
   const v = vmax.slice();
   if (!loop) v[0] = 0; // standing start on an open track
   // Two rounds so the limits carry across the start line on a loop.
   for (let round = 0; round < (loop ? 2 : 1); round++) {
-    for (let i = 1; i < n; i++) v[i] = Math.min(v[i], Math.sqrt(v[i - 1] ** 2 + 2 * A_ACC * STEP));
+    for (let i = 1; i < n; i++) v[i] = Math.min(v[i], Math.sqrt(v[i - 1] ** 2 + 2 * accelAt(v[i - 1]) * STEP));
     if (loop) v[0] = v[n - 1] = Math.min(v[0], v[n - 1]);
-    for (let i = n - 2; i >= 0; i--) v[i] = Math.min(v[i], Math.sqrt(v[i + 1] ** 2 + 2 * A_BRK * STEP));
+    for (let i = n - 2; i >= 0; i--) v[i] = Math.min(v[i], Math.sqrt(v[i + 1] ** 2 + 2 * brakeAt(v[i + 1]) * STEP));
     if (loop) v[0] = v[n - 1] = Math.min(v[0], v[n - 1]);
   }
   if (!loop) v[0] = Math.max(v[0], 1);
@@ -140,7 +153,7 @@ export function timeAtDist(p: LapProfile, d: number): number {
 }
 
 /** Upper speed of each gear, km/h (8-speed gearbox). */
-const GEAR_TOP = [95, 135, 170, 205, 240, 270, 295, 330];
+const GEAR_TOP = [100, 140, 175, 210, 245, 280, 310, 345];
 
 export interface Telemetry {
   gear: number;
@@ -162,8 +175,33 @@ export function telemetry(p: LapProfile, index: number, speed: number): Telemetr
   const accel = (p.speed[i + 1] ** 2 - p.speed[i] ** 2) / (2 * ds);
   let throttle = 0;
   let brake = 0;
-  if (accel < -2) brake = Math.min(1, -accel / A_BRK + 0.25);
+  if (accel < -2) brake = Math.min(1, -accel / brakeAt(speed) + 0.25);
   else if (accel > 1 || speed >= V_MAX - 0.5) throttle = 1;
   else throttle = 0.55 + 0.45 * Math.max(0, accel); // holding speed through a corner
   return { gear: gear + 1, rpm, throttle, brake };
+}
+
+export interface LapStats {
+  /** km/h */
+  topSpeed: number;
+  /** km/h */
+  avgSpeed: number;
+  lapTime: number;
+  /** Share of the lap time spent at full throttle, 0..1. */
+  fullThrottle: number;
+}
+
+/** Headline numbers of the simulated lap. */
+export function lapStats(p: LapProfile): LapStats {
+  let flat = 0;
+  for (let i = 1; i < p.speed.length; i++) {
+    const t = telemetry(p, i - 1, p.speed[i - 1]);
+    if (t.throttle >= 1) flat += p.time[i] - p.time[i - 1];
+  }
+  return {
+    topSpeed: Math.max(...p.speed) * 3.6,
+    avgSpeed: (p.length / p.lapTime) * 3.6,
+    lapTime: p.lapTime,
+    fullThrottle: p.lapTime > 0 ? flat / p.lapTime : 0,
+  };
 }

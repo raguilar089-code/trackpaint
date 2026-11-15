@@ -20,6 +20,7 @@ import {
 } from './elements';
 
 import type { CityLayer } from './city';
+import { formatLapTime, lapProfile, lapStats } from './lap';
 
 export type PosterTheme = 'oscuro' | 'claro';
 
@@ -89,6 +90,36 @@ function fitText(ctx: CanvasRenderingContext2D, text: string, maxW: number, size
   return s;
 }
 
+type Stat = [label: string, value: string, unit: string];
+const BOX_H = 200;
+
+/** One row of four stat boxes. */
+function drawStats(ctx: CanvasRenderingContext2D, stats: Stat[], y: number, t: (typeof THEMES)[PosterTheme], bar: string) {
+  const M = 120;
+  const gap = 28;
+  const boxW = (POSTER_W - 2 * M - gap * 3) / 4;
+  ctx.textBaseline = 'top';
+  stats.forEach(([label, value, unit], i) => {
+    const x = M + i * (boxW + gap);
+    ctx.fillStyle = t.panel;
+    roundRect(ctx, x, y, boxW, BOX_H, 22);
+    ctx.fill();
+    ctx.fillStyle = bar;
+    ctx.fillRect(x, y + 30, 8, 40);
+    ctx.fillStyle = t.muted;
+    ctx.font = `700 28px ${FONT}`;
+    ctx.fillText(label, x + 36, y + 36, boxW - 60);
+    ctx.fillStyle = t.fg;
+    const vs = fitText(ctx, value, boxW - 72, 76);
+    ctx.fillText(value, x + 36, y + 84 + (76 - vs));
+    if (unit) {
+      ctx.fillStyle = t.muted;
+      ctx.font = `600 26px ${FONT}`;
+      ctx.fillText(unit, x + 36, y + 160, boxW - 60);
+    }
+  });
+}
+
 export function drawPoster(canvas: HTMLCanvasElement, a: TrackAnalysis, info: PosterInfo) {
   const t = THEMES[info.theme];
   canvas.width = POSTER_W;
@@ -143,7 +174,7 @@ export function drawPoster(canvas: HTMLCanvasElement, a: TrackAnalysis, info: Po
   y += 240;
 
   // ---- Track drawing area ----
-  const area = { x: M, y: y + 30, w: W - 2 * M, h: 1700 };
+  const area = { x: M, y: y + 30, w: W - 2 * M, h: 1600 };
   if (a.xy.length >= 2) drawTrack(ctx, a, area, info);
   else {
     ctx.fillStyle = t.muted;
@@ -154,10 +185,13 @@ export function drawPoster(canvas: HTMLCanvasElement, a: TrackAnalysis, info: Po
   }
 
   // ---- Stats ----
-  const statsY = area.y + area.h + 60;
-  const stats: [string, string, string][] = [
+  const left = a.corners.filter((c) => c.angle > 0).length;
+  const right = a.corners.length - left;
+  const profile = a.xy.length >= 2 ? lapProfile(info.centre, a.closed) : null;
+  const sim = profile ? lapStats(profile) : null;
+  const track: Stat[] = [
     ['LONGITUD', formatKm(a.length), 'km'],
-    ['CURVAS', String(a.corners.length), a.corners.length === 1 ? 'curva' : 'curvas'],
+    ['CURVAS', String(a.corners.length), `${right} a derecha · ${left} a izquierda`],
     a.longestStraight >= 1000
       ? ['RECTA MÁS LARGA', formatKm(a.longestStraight), 'km']
       : ['RECTA MÁS LARGA', String(Math.round(a.longestStraight)), 'm'],
@@ -165,28 +199,25 @@ export function drawPoster(canvas: HTMLCanvasElement, a: TrackAnalysis, info: Po
       ? ['SENTIDO', a.direction === 'horario' ? 'Horario' : 'Antihorario', '']
       : ['ANCHO DE PISTA', info.width.toLocaleString('es-ES'), 'm'],
   ];
-  const gap = 28;
-  const boxW = (W - 2 * M - gap * 3) / 4;
-  const boxH = 230;
-  stats.forEach(([label, value, unit], i) => {
-    const x = M + i * (boxW + gap);
-    ctx.fillStyle = t.panel;
-    roundRect(ctx, x, statsY, boxW, boxH, 22);
-    ctx.fill();
-    ctx.fillStyle = ACCENT;
-    ctx.fillRect(x, statsY + 36, 8, 46);
+  const car: Stat[] = sim
+    ? [
+        ['VUELTA', formatLapTime(sim.lapTime, 3), a.closed ? 'vuelta lanzada' : 'desde parado'],
+        ['VELOCIDAD PUNTA', String(Math.round(sim.topSpeed)), 'km/h'],
+        ['VELOCIDAD MEDIA', String(Math.round(sim.avgSpeed)), 'km/h'],
+        ['A FONDO', String(Math.round(sim.fullThrottle * 100)), '% de la vuelta'],
+      ]
+    : [];
+  let rowY = area.y + area.h + 50;
+  drawStats(ctx, track, rowY, t, ACCENT);
+  if (car.length) {
+    rowY += BOX_H + 84;
     ctx.fillStyle = t.muted;
-    ctx.font = `700 30px ${FONT}`;
-    ctx.fillText(label, x + 36, statsY + 44, boxW - 60);
-    ctx.fillStyle = t.fg;
-    const vs = fitText(ctx, value, boxW - 72, 84);
-    ctx.fillText(value, x + 36, statsY + 104 + (84 - vs));
-    if (unit) {
-      ctx.fillStyle = t.muted;
-      ctx.font = `600 32px ${FONT}`;
-      ctx.fillText(unit, x + 36, statsY + 186);
-    }
-  });
+    ctx.font = `800 26px ${FONT}`;
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText('SIMULACIÓN CON UN FÓRMULA 1 DE 2026 · ESTIMACIÓN', M, rowY - 22);
+    ctx.textBaseline = 'top';
+    drawStats(ctx, car, rowY, t, '#a855f7');
+  }
 
   // ---- Footer ----
   const fy = POSTER_H - M + 20;
