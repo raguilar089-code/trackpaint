@@ -27,36 +27,18 @@ export interface RibbonLayout {
 }
 
 /**
- * Lay the ribbon out in a box: the track is turned so its long axis runs
- * across, tilted away from the viewer, and heights are exaggerated so the
- * climb fills about a quarter of the drawing (less for nearly flat tracks).
+ * Lay the ribbon out in a box: the track keeps the orientation of the map
+ * (north up), tilted away from the viewer, and heights are exaggerated so
+ * the climb fills up to ~30 % of the drawing (much less for flat tracks).
  */
 export function ribbonLayout(
   plan: XY[],
   elev: number[],
   box: { x: number; y: number; w: number; h: number },
 ): RibbonLayout {
-  // Principal axis of the plan, so the longest side faces the viewer.
-  const n = plan.length;
-  const cx = plan.reduce((s, p) => s + p[0], 0) / n;
-  const cy = plan.reduce((s, p) => s + p[1], 0) / n;
-  let sxx = 0;
-  let syy = 0;
-  let sxy = 0;
-  for (const [x, y] of plan) {
-    sxx += (x - cx) ** 2;
-    syy += (y - cy) ** 2;
-    sxy += (x - cx) * (y - cy);
-  }
-  const ang = 0.5 * Math.atan2(2 * sxy, sxx - syy);
-  const c = Math.cos(-ang);
-  const s = Math.sin(-ang);
-  let rot = plan.map(([x, y]): XY => [(x - cx) * c - (y - cy) * s, (x - cx) * s + (y - cy) * c]);
-  // Look from the low side, so the high part of the lap sits at the back
-  // and reads as "up" on the page.
-  const hiIdx = elev.indexOf(Math.max(...elev));
-  if (rot[hiIdx][1] < 0) rot = rot.map(([x, y]): XY => [-x, -y]);
-
+  // Same orientation as the flat map (north up), seen from the south, so
+  // the shape is the one you drew.
+  const rot = plan;
   const lo = Math.min(...elev);
   const hi = Math.max(...elev);
   const xs = rot.map((p) => p[0]);
@@ -65,13 +47,20 @@ export function ribbonLayout(
   const spanY = Math.max(1, Math.max(...ys) - Math.min(...ys));
   // Fit the plan, leaving room above for the walls. A long, thin track is
   // seen from higher up so it doesn't turn into a flat line.
-  const relief = 0.3; // share of the height for the tallest wall
-  const plainH = box.h * (1 - relief - 0.06);
-  let scale = box.w / spanX;
-  const tilt = Math.min(0.75, Math.max(0.42, (plainH * 0.8) / (spanY * scale)));
-  scale = Math.min(scale, plainH / (spanY * tilt));
   const wallMin = box.h * 0.05; // even the lowest point has a short wall
-  const zScale = hi - lo > 0.5 ? (box.h * relief - wallMin) / (hi - lo) : 0;
+  const fit = (reliefPx: number) => {
+    const plainH = box.h - reliefPx - box.h * 0.06;
+    let sc = box.w / spanX;
+    const tl = Math.min(0.75, Math.max(0.42, (plainH * 0.8) / (spanY * sc)));
+    sc = Math.min(sc, plainH / (spanY * tl));
+    // Exaggerate heights, but not so much that a flat city's few metres of
+    // terrain noise turn into spikes: at most 6× the real scale of the map.
+    const z = hi - lo > 0.5 ? Math.min((reliefPx - wallMin) / (hi - lo), sc * 6) : 0;
+    return { scale: sc, tilt: tl, zScale: z };
+  };
+  let { scale, tilt, zScale } = fit(box.h * 0.3);
+  const used = wallMin + (hi - lo) * zScale;
+  if (used < box.h * 0.3 - 1) ({ scale, tilt, zScale } = fit(used)); // flat: give the room to the plan
   const minX = Math.min(...xs);
   const minY = Math.min(...ys);
   const ox = box.x + (box.w - spanX * scale) / 2;
