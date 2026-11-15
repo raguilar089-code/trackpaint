@@ -41,6 +41,7 @@ import { type LapProfile, carAt, formatLapTime, lapProfile } from './lap';
 import { LapHud } from './hud';
 import { MODEL_TYPES, ModelLayer } from './scene3d';
 import { type CityLayer, fetchCity } from './city';
+import { type ElevationProfile, elevationProfile, fetchHeights } from './elevation';
 import { type PosterTheme, drawPoster } from './poster';
 import * as storage from './storage';
 
@@ -966,7 +967,28 @@ function drawPosterNow() {
     elements: circuit.elements,
     centre: centre(),
     streets: $<HTMLInputElement>('poster-city-bg').checked ? posterCity?.value : null,
+    elevation: $<HTMLInputElement>('poster-elevation').checked ? posterElevation?.value : null,
   });
+}
+
+/** Terrain profile along the track for the poster, keyed by the track shape. */
+let posterElevation: { key: string; value: ElevationProfile | null } | null = null;
+
+async function loadPosterElevation() {
+  const key = JSON.stringify([circuit.points, circuit.closed, circuit.snapToRoads, samples.length]);
+  if (posterElevation?.key === key || !$<HTMLInputElement>('poster-elevation').checked) return;
+  setPosterLoading('Leyendo la elevación del terreno…');
+  let value: ElevationProfile | null = null;
+  try {
+    const line = centre();
+    value = elevationProfile(line, circuit.closed, await fetchHeights(line));
+  } catch {
+    value = null;
+  }
+  posterElevation = { key, value };
+  $('poster-elevation-status').textContent = value
+    ? `Entre ${Math.round(value.lowest.elev)} y ${Math.round(value.highest.elev)} m de altitud (${Math.round(value.highest.elev - value.lowest.elev)} m de desnivel).`
+    : 'No se pudo leer la elevación del terreno.';
 }
 
 /** Streets around the track for the poster, keyed by the track shape. */
@@ -1060,8 +1082,18 @@ async function preparePoster() {
     $('poster-status').textContent = value ? '' : 'No se pudo detectar el lugar. Puedes escribirlo a mano.';
   }
   await loadFlag(locality.value?.countryCode ?? '');
-  await loadPosterCity();
+  await Promise.all([loadPosterCity(), loadPosterElevation()]);
 }
+
+$<HTMLInputElement>('poster-elevation').onchange = async () => {
+  setPosterLoading('Leyendo la elevación del terreno…');
+  try {
+    await loadPosterElevation();
+  } finally {
+    drawPosterNow();
+    setPosterLoading(null);
+  }
+};
 
 $<HTMLInputElement>('poster-city-bg').onchange = async () => {
   setPosterLoading('Cargando las calles de alrededor…');

@@ -20,6 +20,7 @@ import {
 } from './elements';
 
 import type { CityLayer } from './city';
+import type { ElevationPoint, ElevationProfile } from './elevation';
 import { type LapStats, formatLapTime, lapProfile, lapStats } from './lap';
 
 export type PosterTheme = 'oscuro' | 'claro';
@@ -39,6 +40,8 @@ export interface PosterInfo {
   centre: LngLat[];
   /** Streets and buildings around the track, drawn faintly behind it. */
   streets?: CityLayer | null;
+  /** Terrain height along the track: highest/lowest points and profile. */
+  elevation?: ElevationProfile | null;
 }
 
 export const POSTER_W = 2000;
@@ -186,7 +189,8 @@ export function drawPoster(canvas: HTMLCanvasElement, a: TrackAnalysis, info: Po
   y += 240;
 
   // ---- Track drawing area ----
-  const area = { x: M, y: y + 30, w: W - 2 * M, h: 1600 };
+  const elev = a.xy.length >= 2 ? (info.elevation ?? null) : null;
+  const area = { x: M, y: y + 30, w: W - 2 * M, h: elev ? 1380 : 1600 };
   if (a.xy.length >= 2) drawTrack(ctx, a, area, info);
   else {
     ctx.fillStyle = t.muted;
@@ -229,6 +233,14 @@ export function drawPoster(canvas: HTMLCanvasElement, a: TrackAnalysis, info: Po
     ctx.textBaseline = 'top';
     drawStats(ctx, car, rowY, t, '#a855f7');
   }
+  if (elev) {
+    rowY += BOX_H + 84;
+    ctx.fillStyle = t.muted;
+    ctx.font = `800 26px ${FONT}`;
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText('PERFIL DE ELEVACIÓN', M, rowY - 22);
+    drawElevation(ctx, elev, a, { x: M, y: rowY, w: W - 2 * M, h: 240 }, t);
+  }
 
   // ---- Footer ----
   const fy = POSTER_H - M + 20;
@@ -243,7 +255,8 @@ export function drawPoster(canvas: HTMLCanvasElement, a: TrackAnalysis, info: Po
   ctx.font = `500 28px ${FONT}`;
   ctx.textAlign = 'right';
   const date = new Date().toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' });
-  ctx.fillText(`Ancho de pista ${info.width.toLocaleString('es-ES')} m  ·  ${date}  ·  Datos © OpenStreetMap`, W - M, fy);
+  const credits = elev ? 'Datos © OpenStreetMap, elevación Mapzen/AWS' : 'Datos © OpenStreetMap';
+  ctx.fillText(`Ancho de pista ${info.width.toLocaleString('es-ES')} m  ·  ${date}  ·  ${credits}`, W - M, fy);
   ctx.textAlign = 'left';
 }
 
@@ -619,6 +632,7 @@ function drawTrack(
   }
 
   // Corner numbers, placed on the outside of each bend.
+  const badges: [number, number][] = [];
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   for (const c of a.corners) {
@@ -629,6 +643,7 @@ function drawTrack(
     const [px, py] = pts[c.index];
     const lx = px - nx * off * side;
     const ly = py - ny * off * side;
+    badges.push([lx, ly]);
     ctx.fillStyle = ACCENT;
     ctx.beginPath();
     ctx.arc(lx, ly, 34, 0, Math.PI * 2);
@@ -721,6 +736,88 @@ function drawTrack(
     tag(`SM${i + 1}`, '#15803d', far[0] + (far[0] >= mid[0] ? 6 : -70), far[1]);
   });
 
+  // Highest and lowest points of the lap, with a callout like a TV graphic.
+  if (info.elevation && info.elevation.highest.elev - info.elevation.lowest.elev >= 1) {
+    const mid: [number, number] = [area.x + area.w / 2, area.y + area.h / 2];
+    const callout = (p: ElevationPoint, high: boolean) => {
+      const [px, py] = P(a.projection.toXY(p.coord));
+      // Push the box away from the middle of the circuit, staying inside the area.
+      let dx = px - mid[0];
+      let dy = py - mid[1];
+      const l = Math.hypot(dx, dy) || 1;
+      dx /= l;
+      dy /= l;
+      const text = `${Math.round(p.elev)} m`;
+      ctx.font = `800 40px ${FONT}`;
+      const bw = ctx.measureText(text).width + 90;
+      const bh = 64;
+      // Away from the middle first; turn the direction if a corner number is in the way.
+      const place = (ang: number, dist: number) => {
+        const c = Math.cos(ang);
+        const sn = Math.sin(ang);
+        const ux = dx * c - dy * sn;
+        const uy = dx * sn + dy * c;
+        const x = Math.min(area.x + area.w - bw - 4, Math.max(area.x + 4, px + ux * dist - bw / 2));
+        const y = Math.min(area.y + area.h - bh - 4, Math.max(area.y + 4, py + uy * dist - bh / 2));
+        const clash = badges.some(([cx, cy]) => {
+          const nx = Math.max(x, Math.min(x + bw, cx));
+          const ny = Math.max(y, Math.min(y + bh, cy));
+          return Math.hypot(cx - nx, cy - ny) < 46;
+        }) || pts.some(([qx, qy]) => qx > x - 26 && qx < x + bw + 26 && qy > y - 26 && qy < y + bh + 26);
+        return { x, y, clash };
+      };
+      const tries: [number, number][] = [[0, 130], [0.6, 150], [-0.6, 150], [0, 200], [1.2, 160], [-1.2, 160], [0, 280]];
+      let spot = place(...tries[0]);
+      for (const [ang, dist] of tries) {
+        spot = place(ang, dist);
+        if (!spot.clash) break;
+      }
+      if (spot.clash) spot = place(0, 130);
+      const bx = spot.x;
+      const by = spot.y;
+      const color = high ? '#f59e0b' : '#0ea5e9';
+      ctx.strokeStyle = t.fg;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.lineTo(Math.min(bx + bw, Math.max(bx, px)), Math.min(by + bh, Math.max(by, py)));
+      ctx.stroke();
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(px, py, 13, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = t.panel;
+      roundRect(ctx, bx, by, bw, bh, 12);
+      ctx.fill();
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = color;
+      ctx.stroke();
+      // ▲ / ▼ then the height.
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      const tx = bx + 34;
+      const ty = by + bh / 2;
+      if (high) {
+        ctx.moveTo(tx - 14, ty + 10);
+        ctx.lineTo(tx + 14, ty + 10);
+        ctx.lineTo(tx, ty - 14);
+      } else {
+        ctx.moveTo(tx - 14, ty - 10);
+        ctx.lineTo(tx + 14, ty - 10);
+        ctx.lineTo(tx, ty + 14);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = t.fg;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, bx + 62, ty + 2);
+    };
+    callout(info.elevation.highest, true);
+    callout(info.elevation.lowest, false);
+  }
+
   // Legend for whatever race markings are present.
   const legend: [string, string][] = [];
   if (sectors.length) SECTOR_COLORS.forEach((c, i) => legend.push([c, `Sector ${i + 1}`]));
@@ -773,4 +870,92 @@ function drawTrack(
   ctx.font = `600 28px ${FONT}`;
   ctx.fillText(metres >= 1000 ? `${metres / 1000} km` : `${metres} m`, bx - 60 - len / 2, by - 48);
   ctx.textAlign = 'left';
+}
+
+/** Height along the lap as a filled profile, with the corner numbers and the key figures. */
+function drawElevation(
+  ctx: CanvasRenderingContext2D,
+  e: ElevationProfile,
+  a: TrackAnalysis,
+  box: { x: number; y: number; w: number; h: number },
+  t: (typeof THEMES)[PosterTheme],
+) {
+  ctx.fillStyle = t.panel;
+  roundRect(ctx, box.x, box.y, box.w, box.h, 22);
+  ctx.fill();
+  const statsW = 520;
+  const chart = { x: box.x + 36, y: box.y + 34, w: box.w - statsW - 72, h: box.h - 80 };
+  const pts = e.points;
+  const total = pts[pts.length - 1].dist || 1;
+  const lo = e.lowest.elev;
+  const hi = e.highest.elev;
+  // At least 20 m of vertical range, so flat tracks look flat.
+  const range = Math.max(20, hi - lo);
+  const base = lo - (range - (hi - lo)) / 2 - range * 0.08;
+  const top = base + range * 1.16;
+  const X = (d: number) => chart.x + (d / total) * chart.w;
+  const Y = (h: number) => chart.y + chart.h - ((h - base) / (top - base)) * chart.h;
+
+  const grad = ctx.createLinearGradient(0, chart.y, 0, chart.y + chart.h);
+  grad.addColorStop(0, 'rgba(225,29,46,0.55)');
+  grad.addColorStop(1, 'rgba(225,29,46,0.04)');
+  ctx.beginPath();
+  ctx.moveTo(X(0), chart.y + chart.h);
+  for (const p of pts) ctx.lineTo(X(p.dist), Y(p.elev));
+  ctx.lineTo(X(total), chart.y + chart.h);
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
+  ctx.beginPath();
+  pts.forEach((p, i) => (i ? ctx.lineTo(X(p.dist), Y(p.elev)) : ctx.moveTo(X(p.dist), Y(p.elev))));
+  ctx.strokeStyle = ACCENT;
+  ctx.lineWidth = 5;
+  ctx.lineJoin = 'round';
+  ctx.stroke();
+
+  // Corner numbers under the curve.
+  ctx.fillStyle = t.muted;
+  ctx.font = `700 20px ${FONT}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  let lastX = -Infinity;
+  for (const c of a.corners) {
+    const x = X(c.apexDist);
+    if (x - lastX < 26) continue;
+    ctx.fillText(String(c.number), x, chart.y + chart.h + 12);
+    lastX = x;
+  }
+  // High and low markers.
+  for (const [p, color] of [
+    [e.highest, '#f59e0b'],
+    [e.lowest, '#0ea5e9'],
+  ] as const) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(X(p.dist), Y(p.elev), 10, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Figures on the right.
+  const figs: [string, string, string][] = [
+    ['MÁS ALTO', `${Math.round(hi)} m`, '#f59e0b'],
+    ['MÁS BAJO', `${Math.round(lo)} m`, '#0ea5e9'],
+    ['DESNIVEL', `${Math.round(hi - lo)} m`, ACCENT],
+    ['PENDIENTE MÁX.', `${(Math.max(e.maxUphill, e.maxDownhill) * 100).toLocaleString('es-ES', { maximumFractionDigits: 1 })} %`, t.muted],
+  ];
+  const fx = box.x + box.w - statsW;
+  ctx.textAlign = 'left';
+  figs.forEach(([label, value, color], i) => {
+    const cx = fx + (i % 2) * 250;
+    const cy = box.y + 30 + Math.floor(i / 2) * 104;
+    ctx.fillStyle = color;
+    ctx.fillRect(cx, cy + 4, 6, 26);
+    ctx.fillStyle = t.muted;
+    ctx.font = `700 22px ${FONT}`;
+    ctx.textBaseline = 'top';
+    ctx.fillText(label, cx + 18, cy + 6, 220);
+    ctx.fillStyle = t.fg;
+    ctx.font = `800 46px ${FONT}`;
+    ctx.fillText(value, cx + 18, cy + 40, 220);
+  });
 }
