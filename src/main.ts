@@ -42,7 +42,7 @@ import { LapHud } from './hud';
 import { MODEL_TYPES, ModelLayer } from './scene3d';
 import { type CityLayer, fetchCity } from './city';
 import { type ElevationProfile, elevationProfile, fetchHeights } from './elevation';
-import { type PosterTheme, drawPoster } from './poster';
+import { type PosterTheme, type PosterView, drawPoster } from './poster';
 import * as storage from './storage';
 
 type Tool = 'paint' | 'draw' | 'edit' | 'pan' | 'element';
@@ -968,6 +968,7 @@ function drawPosterNow() {
     centre: centre(),
     streets: $<HTMLInputElement>('poster-city-bg').checked ? posterCity?.value : null,
     elevation: $<HTMLInputElement>('poster-elevation').checked ? posterElevation?.value : null,
+    view: posterView,
   });
 }
 
@@ -1111,6 +1112,42 @@ function setPosterTheme(theme: PosterTheme) {
     b.setAttribute('aria-pressed', String(b.dataset.theme === theme));
   });
 }
+
+let posterView: PosterView = 'plano';
+try {
+  if (localStorage.getItem('trackpaint:poster-view') === 'relieve') posterView = 'relieve';
+} catch {
+  /* private mode */
+}
+function setPosterView(view: PosterView) {
+  posterView = view;
+  try {
+    localStorage.setItem('trackpaint:poster-view', view);
+  } catch {
+    /* private mode */
+  }
+  document.querySelectorAll<HTMLButtonElement>('[data-poster-view]').forEach((b) => {
+    b.setAttribute('aria-pressed', String(b.dataset.posterView === view));
+  });
+}
+setPosterView(posterView);
+document.querySelectorAll<HTMLButtonElement>('[data-poster-view]').forEach((b) => {
+  b.onclick = async () => {
+    setPosterView(b.dataset.posterView as PosterView);
+    const box = $<HTMLInputElement>('poster-elevation');
+    if (posterView === 'relieve' && !box.checked) {
+      // The relief needs the terrain heights.
+      box.checked = true;
+      setPosterLoading('Leyendo la elevación del terreno…');
+      try {
+        await loadPosterElevation();
+      } finally {
+        setPosterLoading(null);
+      }
+    }
+    drawCurrentPoster();
+  };
+});
 
 $('poster').onclick = () => void openPoster();
 $('poster-close').onclick = () => posterDialog.close();
