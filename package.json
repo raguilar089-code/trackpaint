@@ -10,15 +10,19 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@mapbox/vector-tile": "^2.0.5",
     "flag-icons": "^7.6.0",
     "maplibre-gl": "^6.18.0",
+    "pbf": "^4.0.2",
     "three": "^0.170.0"
   },
   "devDependencies": {
     "@types/geojson": "^7946.0.16",
     "@types/three": "^0.170.0",
+    "geojson-vt": "^4.0.3",
     "typescript": "^5.9.3",
     "vite": "^6.4.6",
-    "vitest": "^5.1.0"
+    "vitest": "^5.1.0",
+    "vt-pbf": "^3.1.3"
   }
 }

@@ -38,7 +38,7 @@ import { analyzeTrack } from './analysis';
 import { type LapProfile, carAt, formatLapTime, lapProfile } from './lap';
 import { LapHud } from './hud';
 import { MODEL_TYPES, ModelLayer } from './scene3d';
-import { type CityLayer, captureCity } from './city';
+import { type CityLayer, fetchCity } from './city';
 import { type PosterTheme, drawPoster } from './poster';
 import * as storage from './storage';
 
@@ -789,12 +789,14 @@ $('undo').onclick = undo;
 $('redo').onclick = redo;
 $('fit').onclick = fitToCircuit;
 $('clear').onclick = () => {
+  select(null);
   commit((c) => {
     c.points = [];
     c.closed = false;
+    c.elements = []; // grandstands, walls, marshals… go with the track
   });
   setTool('paint');
-  setStatus('Trazado borrado. Puedes deshacerlo.');
+  setStatus('Trazado y elementos borrados. Puedes deshacerlo con Ctrl+Z.');
 };
 $('save').onclick = () => {
   storage.saveCircuit(circuit);
@@ -892,12 +894,14 @@ async function loadPosterCity() {
   $('poster-status').textContent = 'Cargando las calles de alrededor…';
   let value: CityLayer | null = null;
   try {
-    value = await captureCity(map, posterBounds());
+    value = await fetchCity(map, posterBounds());
   } catch {
     value = null;
   }
   posterCity = { key, value };
-  $('poster-status').textContent = value ? '' : 'No se pudieron cargar las calles de alrededor.';
+  $('poster-status').textContent = value
+    ? `Fondo: ${value.roads.length.toLocaleString('es')} tramos de calle y ${value.buildings.length.toLocaleString('es')} edificios.`
+    : 'No se pudieron cargar las calles de alrededor.';
 }
 
 async function loadFlag(code: string) {

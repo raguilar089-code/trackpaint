@@ -230,18 +230,18 @@ function elementPoints(e: TrackElement): LngLat[] {
 
 const CITY = {
   oscuro: {
-    water: '#122233',
-    park: '#13201a',
-    building: 'rgba(255,255,255,0.055)',
-    road: 'rgba(255,255,255,0.16)',
-    major: 'rgba(255,255,255,0.26)',
+    water: '#16304a',
+    park: '#16291d',
+    building: 'rgba(255,255,255,0.11)',
+    road: 'rgba(255,255,255,0.30)',
+    major: 'rgba(255,255,255,0.48)',
   },
   claro: {
-    water: '#d3e3ee',
-    park: '#e2eadb',
-    building: 'rgba(20,23,28,0.07)',
-    road: 'rgba(20,23,28,0.16)',
-    major: 'rgba(20,23,28,0.26)',
+    water: '#c4dbeb',
+    park: '#d9e6cf',
+    building: 'rgba(20,23,28,0.12)',
+    road: 'rgba(20,23,28,0.24)',
+    major: 'rgba(20,23,28,0.40)',
   },
 } as const;
 
@@ -300,7 +300,7 @@ function drawCity(
   }
   // Fade into the poster background towards the edges.
   const bg = THEMES[theme].bg;
-  const fade = 160;
+  const fade = 110;
   const edge = (x0: number, y0: number, x1: number, y1: number, x: number, y: number, w: number, h: number) => {
     const g = ctx.createLinearGradient(x0, y0, x1, y1);
     g.addColorStop(0, bg);
