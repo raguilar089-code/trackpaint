@@ -13,7 +13,7 @@ import {
   segmentKey,
   segments,
 } from './circuit';
-import { type LngLat, LocalProjection, type Sample, bearing, simplify } from './geometry';
+import { type LngLat, LocalProjection, type Sample, bearing, roundCorners, simplify } from './geometry';
 import { STYLES, addTrackLayers, renderElements, renderStroke, renderTrack, usePattern } from './render';
 import {
   ELEMENT_LABELS,
@@ -27,18 +27,21 @@ import {
   autoRaceLayout,
   autoMarshals,
   autoWalls,
+  attachToEdge,
   cumulative,
+  edgeLine,
   locateOnTrack,
   newId,
   placeBlock,
   sectorBounds,
 } from './elements';
-import { type Locality, flagUrl, reverseGeocode, routeSegment, searchPlaces } from './services';
+import { type Locality, flagUrl, reverseGeocode, routePath, routeSegment, searchPlaces } from './services';
 import { analyzeTrack } from './analysis';
 import { type LapProfile, carAt, formatLapTime, lapProfile } from './lap';
 import { LapHud } from './hud';
 import { MODEL_TYPES, ModelLayer } from './scene3d';
 import { type CityLayer, fetchCity } from './city';
+import { type ElevationProfile, elevationProfile, fetchHeights } from './elevation';
 import { type PosterTheme, drawPoster } from './poster';
 import * as storage from './storage';
 
@@ -107,6 +110,7 @@ map.on('style.load', () => {
 
 function redraw() {
   samples = buildCentreline(circuit, routes);
+  syncEdgeBarriers();
   if (map.getSource('tp-points')) {
     renderTrack(map, circuit, samples, tool !== 'pan' && tool !== 'element');
     renderElements(map, circuit.elements, centre(), circuit.closed, circuit.width, selectedId);
@@ -116,6 +120,18 @@ function redraw() {
 }
 
 const centre = () => samples.map((s) => s.coord);
+
+/** Rebuild barriers that follow the track edge, so they move with the track. */
+function syncEdgeBarriers() {
+  const line = centre();
+  if (line.length < 2) return;
+  for (const e of circuit.elements) {
+    if ((e.type === 'wall' || e.type === 'fence' || e.type === 'tyres') && e.attach) {
+      const coords = edgeLine(e.attach, line, circuit.closed, circuit.width);
+      if (coords.length >= 2) e.coords = coords;
+    }
+  }
+}
 
 /** Record an undo step, apply a change, then refresh everything. */
 function commit(change: (c: Circuit) => void) {
@@ -450,14 +466,57 @@ function applyElementStroke(pts: { x: number; y: number }[]) {
   } else if (type === 'gravel' || type === 'runoff' || type === 'grass') {
     if (coords.length < 3) return;
     el = { id: newId(), type, ring: coords };
-  } else if (type === 'wall' || type === 'fence' || type === 'tyres' || type === 'pitlane') {
-    el = { id: newId(), type, coords };
+  } else if (type === 'wall' || type === 'fence' || type === 'tyres') {
+    const attach = attachToEdge(type, coords, centre(), circuit.closed, circuit.width);
+    el = attach
+      ? { id: newId(), type, attach, coords: edgeLine(attach, centre(), circuit.closed, circuit.width) }
+      : { id: newId(), type, coords };
+  } else if (type === 'pitlane') {
+    el = { id: newId(), type, coords: circuit.snapToRoads ? coords : smoothLine(coords) };
   }
   if (!el) return;
   const added = el;
   commit((c) => c.elements.push(added));
   select(added.id);
-  setStatus(`${ELEMENT_LABELS[type]} añadido.`);
+  const followsEdge = added.type !== 'pitlane' && 'attach' in added && added.attach;
+  setStatus(`${ELEMENT_LABELS[type]} añadido${followsEdge ? ', siguiendo el borde de la pista' : ''}.`);
+  if (added.type === 'pitlane' && circuit.snapToRoads) void snapPitlane(added.id, coords);
+}
+
+/** Round off the corners of a hand-drawn or routed pit lane. */
+function smoothLine(coords: LngLat[], radius = 8): LngLat[] {
+  if (coords.length < 3) return coords;
+  return roundCorners(
+    coords.map((coord) => ({ coord, seg: 0 })),
+    false,
+    radius,
+  ).map((s) => s.coord);
+}
+
+/**
+ * With "Seguir las calles" on, the pit lane follows the streets like the
+ * track: route through a few points of the stroke, then round the corners.
+ */
+async function snapPitlane(id: string, stroke: LngLat[]) {
+  const via = simplify(stroke, 15);
+  const step = Math.max(1, Math.ceil((via.length - 1) / 6));
+  const points = via.filter((_, i) => i % step === 0 || i === via.length - 1);
+  setStatus('Ajustando el pit lane a las calles…');
+  let path: LngLat[] | null = null;
+  try {
+    path = await routePath(points);
+  } catch {
+    path = null;
+  }
+  const el = circuit.elements.find((e) => e.id === id);
+  if (!el || el.type !== 'pitlane') return; // deleted or undone meanwhile
+  if (!path) {
+    commit(() => (el.coords = smoothLine(stroke)));
+    setStatus('No se pudo ajustar el pit lane a las calles; se usa lo dibujado.');
+    return;
+  }
+  commit(() => (el.coords = smoothLine(path!, 10)));
+  setStatus('Pit lane ajustado a las calles.');
 }
 
 function toLngLat(p: { x: number; y: number }): LngLat {
@@ -521,10 +580,10 @@ const HINTS: Record<Tool, string> = {
 
 const ELEMENT_HINTS: Record<ElementType, string> = {
   kerb: 'Arrastra a lo largo del borde de la pista. El piano va en el lado donde empiezas.',
-  wall: 'Arrastra para dibujar el muro.',
-  fence: 'Arrastra para dibujar la valla.',
-  tyres: 'Arrastra para dibujar la barrera de neumáticos.',
-  pitlane: 'Arrastra para dibujar el carril de boxes.',
+  wall: 'Arrastra a lo largo de la pista para poner el muro. Junto a la pista se pega al borde y sigue sus curvas; si lo dibujas más lejos, va en paralelo a esa distancia.',
+  fence: 'Arrastra a lo largo de la pista para poner la valla. Junto a la pista se pega al borde y sigue sus curvas; si lo dibujas más lejos, va en paralelo a esa distancia.',
+  tyres: 'Arrastra a lo largo de la pista para poner la barrera de neumáticos. Junto a la pista se pega al borde y sigue sus curvas; si lo dibujas más lejos, va en paralelo a esa distancia.',
+  pitlane: 'Arrastra para dibujar el carril de boxes. Con «Seguir las calles» activado se ajusta a las calles, como la pista.',
   gravel: 'Rodea la zona arrastrando; se cierra sola al soltar.',
   runoff: 'Rodea la zona de escapatoria de asfalto; se cierra sola al soltar.',
   grass: 'Rodea la zona de césped; se cierra sola al soltar.',
@@ -593,7 +652,7 @@ function updateSelectionUi() {
   $('sel-rotate-left').hidden = $('sel-rotate-right').hidden = !isBlock;
   $('sel-length-wrap').hidden = !isBlock;
   if (isBlock) $<HTMLInputElement>('sel-length').value = String(Math.round(el.length));
-  $('sel-flip').hidden = !['kerb', 'marshal', 'crane'].includes(el.type);
+  $('sel-flip').hidden = !(['kerb', 'marshal', 'crane'].includes(el.type) || ('attach' in el && el.attach));
 }
 
 function updateSelected(change: (e: TrackElement) => void) {
@@ -736,8 +795,11 @@ $('sel-delete').onclick = deleteSelected;
 $('sel-flip').onclick = () =>
   updateSelected(
     (e) =>
-      (e.type === 'kerb' || e.type === 'marshal' || e.type === 'crane') &&
-      (e.side = e.side === 'left' ? 'right' : 'left'),
+      ((e.type === 'kerb' || e.type === 'marshal' || e.type === 'crane') &&
+        (e.side = e.side === 'left' ? 'right' : 'left')) ||
+      ((e.type === 'wall' || e.type === 'fence' || e.type === 'tyres') &&
+        e.attach &&
+        (e.attach.side = e.attach.side === 'left' ? 'right' : 'left')),
   );
 $('sel-rotate-left').onclick = () =>
   updateSelected((e) => (e.type === 'pits' || e.type === 'grandstand') && (e.bearing = (e.bearing + 345) % 360));
@@ -905,7 +967,28 @@ function drawPosterNow() {
     elements: circuit.elements,
     centre: centre(),
     streets: $<HTMLInputElement>('poster-city-bg').checked ? posterCity?.value : null,
+    elevation: $<HTMLInputElement>('poster-elevation').checked ? posterElevation?.value : null,
   });
+}
+
+/** Terrain profile along the track for the poster, keyed by the track shape. */
+let posterElevation: { key: string; value: ElevationProfile | null } | null = null;
+
+async function loadPosterElevation() {
+  const key = JSON.stringify([circuit.points, circuit.closed, circuit.snapToRoads, samples.length]);
+  if (posterElevation?.key === key || !$<HTMLInputElement>('poster-elevation').checked) return;
+  setPosterLoading('Leyendo la elevación del terreno…');
+  let value: ElevationProfile | null = null;
+  try {
+    const line = centre();
+    value = elevationProfile(line, circuit.closed, await fetchHeights(line));
+  } catch {
+    value = null;
+  }
+  posterElevation = { key, value };
+  $('poster-elevation-status').textContent = value
+    ? `Entre ${Math.round(value.lowest.elev)} y ${Math.round(value.highest.elev)} m de altitud (${Math.round(value.highest.elev - value.lowest.elev)} m de desnivel).`
+    : 'No se pudo leer la elevación del terreno.';
 }
 
 /** Streets around the track for the poster, keyed by the track shape. */
@@ -999,8 +1082,18 @@ async function preparePoster() {
     $('poster-status').textContent = value ? '' : 'No se pudo detectar el lugar. Puedes escribirlo a mano.';
   }
   await loadFlag(locality.value?.countryCode ?? '');
-  await loadPosterCity();
+  await Promise.all([loadPosterCity(), loadPosterElevation()]);
 }
+
+$<HTMLInputElement>('poster-elevation').onchange = async () => {
+  setPosterLoading('Leyendo la elevación del terreno…');
+  try {
+    await loadPosterElevation();
+  } finally {
+    drawPosterNow();
+    setPosterLoading(null);
+  }
+};
 
 $<HTMLInputElement>('poster-city-bg').onchange = async () => {
   setPosterLoading('Cargando las calles de alrededor…');

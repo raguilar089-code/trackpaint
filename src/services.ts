@@ -32,6 +32,33 @@ export async function routeSegment(a: LngLat, b: LngLat, signal?: AbortSignal): 
   return [a, ...coords.slice(1, -1), b];
 }
 
+/**
+ * Street-following path through several points (start, waypoints, end), with
+ * the same rules as routeSegment. Null if there is no route.
+ */
+export async function routePath(points: LngLat[], signal?: AbortSignal): Promise<LngLat[] | null> {
+  if (points.length < 2) return null;
+  if (points.length === 2) return routeSegment(points[0], points[1], signal);
+  const request = {
+    locations: points.map((p, i) => ({
+      lon: p[0],
+      lat: p[1],
+      type: i === 0 || i === points.length - 1 ? 'break' : 'through',
+    })),
+    costing: 'auto',
+    costing_options: { auto: { ignore_oneways: true, ignore_restrictions: true, ignore_closures: true } },
+    directions_type: 'none',
+  };
+  const res = await fetch(`${VALHALLA}?json=${encodeURIComponent(JSON.stringify(request))}`, { signal });
+  if (res.status === 400) return null;
+  if (!res.ok) throw new Error(`Routing ${res.status}`);
+  const body = await res.json();
+  const shape = body?.trip?.legs?.[0]?.shape as string | undefined;
+  if (!shape) return null;
+  const coords = decodePolyline(shape, 6);
+  return coords.length >= 2 ? coords : null;
+}
+
 /** Decode an encoded polyline (Google format) into [lng, lat] pairs. */
 export function decodePolyline(str: string, precision = 6): LngLat[] {
   const factor = 10 ** precision;
